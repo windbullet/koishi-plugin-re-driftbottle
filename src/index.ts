@@ -87,11 +87,13 @@ export function apply(ctx: Context, config: Config) {
       let bottles;
       if (!bottleId) {
         bottles = await ctx.database.get("bottle", {})
+        if (!bottles || bottles.length < 1) return "没有瓶子了！"
       } else {
         bottles = await ctx.database.get("bottle", {id: bottleId})
+        if (!bottles || bottles.length < 1) return "没有这个瓶子！"
       }
-      if (!bottles || bottles.length < 1) return "没有瓶子了！"
-      const bottle = bottles[Random.int(0, bottles.length)];
+
+      const bottle = bottles[Random.int(1, bottles.length)];
       const {content, id, uid, username} = bottle;
       const comments = await ctx.database.get('comment', { bid: id });
       const chain = [];
@@ -156,25 +158,27 @@ export function apply(ctx: Context, config: Config) {
         if (ct.length < 1) return '内容过短！';
         ct = "“" + ct + "”"
         for (const bot of ctx.bots) {
-          const guildList = await bot.getGuildList();
+          const guildList = await bot.getGuildIter();
           if (!replyId) {
             if (uid !== buid) {
-              const guild = guildList.find(g => g.guildId === bgid);
-              if (guild) {
-                await bot.sendMessage(bgid, h("at", {id: buid}) + `你的${id}号瓶子有新评论！\n\n${ct}\n\n发送【捞漂流瓶 ${id}】查看详情`)
-                break
+              for await (let i of guildList) {
+                if (i.guildId === bgid) {
+                  await bot.sendMessage(bgid, h("at", {id: buid}) + `你的${id}号瓶子有新评论！\n\n${ct}\n\n发送【捞漂流瓶 ${id}】查看详情`)
+                  break
+                }
               }
             }
           } else {
             const { username: commentUsername, uid: cuid, gid: cgid } = comment;
             ct = `回复 ${replyId}. ${commentUsername}：${ct}`;
             if (cuid !== uid) {
-              const guild = guildList.find(g => g.guildId === cgid);
-              if (guild) {
-                const atUser = h("at", {id: cuid});
-                const message = `${atUser}${id}号瓶子中你的${replyId}号评论有新回复！\n\n${ct}\n\n发送【捞漂流瓶 ${id}】查看详情`;
-                await bot.sendMessage(cgid, message);
-                break;
+              for await (let i of guildList) {
+                if (i.guildId === bgid) {
+                  const atUser = h("at", {id: cuid});
+                  const message = `${atUser}${id}号瓶子中你的${replyId}号评论有新回复！\n\n${ct}\n\n发送【捞漂流瓶 ${id}】查看详情`;
+                  await bot.sendMessage(cgid, message);
+                  break;
+                }
               }
             }
           }
@@ -229,7 +233,7 @@ export function apply(ctx: Context, config: Config) {
         chain.push(`你扔出去的瓶子有：`);
         for (const bottle of bottles) {
           const { content, id } = bottle;
-          chain.push(`“${content}”——瓶子编号：${id}`);
+          chain.push(`${content}——瓶子编号：${id}`);
         }
         return chain.join('\n');
       })
