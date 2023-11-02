@@ -193,7 +193,7 @@ export function apply(ctx: Context, config: Config) {
         return '你的评论已经扔出去了！';
       })
 
-    ctx.command('bottle.删除瓶子 <id:posint>', '', { checkArgCount: true})
+    ctx.command('漂流瓶.删除瓶子 <id:posint>', '', { checkArgCount: true})
       .alias("删除瓶子")
       .example('删除瓶子 <瓶子编号>')
       .action(async ({ session }, id) => {
@@ -207,7 +207,7 @@ export function apply(ctx: Context, config: Config) {
         return '瓶子删除了！';
       });
 
-    ctx.command('bottle.删除评论 <bid:posint> <cid:posint>', '', {checkArgCount: true})
+    ctx.command('漂流瓶.删除评论 <bid:posint> <cid:posint>', '', {checkArgCount: true})
       .alias("删除评论")
       .example('删除评论 <瓶子编号> <评论编号>')
       .action(async ({ session }, bid, cid) => {
@@ -220,7 +220,7 @@ export function apply(ctx: Context, config: Config) {
         return '评论删除了！';
       });
 
-    ctx.command('bottle.查看我的瓶子', '')
+    ctx.command('漂流瓶.查看我的瓶子', '')
       .alias('查看我的瓶子')
       .action(async ({ session }) => {
         const bottles = await ctx.database.get('bottle', { uid: session.event.user.id });
@@ -234,7 +234,7 @@ export function apply(ctx: Context, config: Config) {
         return chain.join('\n');
       })
 
-    ctx.command('bottle.删除过期瓶子 <days:posint>', '删除指定天数前的瓶子，防止数据库过大')
+    ctx.command('漂流瓶.删除过期瓶子 <days:posint>', '删除指定天数前的瓶子，防止数据库过大')
       .alias('删除过期瓶子')
       .example('删除过期瓶子 <天数>')
       .action(async ({ session }, days) => {
