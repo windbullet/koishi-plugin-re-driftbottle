@@ -93,7 +93,7 @@ export function apply(ctx: Context, config: Config) {
         if (!bottles || bottles.length < 1) return "没有这个瓶子！"
       }
 
-      const bottle = bottles[Random.int(1, bottles.length)];
+      const bottle = bottles[Random.int(0, bottles.length)];
       const {content, id, uid, username} = bottle;
       const comments = await ctx.database.get('comment', { bid: id });
       const chain = [];
