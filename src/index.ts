@@ -97,11 +97,8 @@ export function apply(ctx: Context, config: Config) {
       const {content, id, uid, username} = bottle;
       const comments = await ctx.database.get('comment', { bid: id });
       const chain = [];
-      const botInfo = await session.bot.getLogin();
       chain.push({ 
-      'id': session.selfId, 
       'text': `你捞到了一只编号为${id}的瓶子！破折号后是漂流瓶主人的昵称！\n发送“评论瓶子 ${id} <内容>”可以在下面评论这只瓶子，发送“评论瓶子 [-r <评论编号>] ${id} <内容>”可以回复评论区的评论`, 
-      'username': botInfo.user.name
       });
       chain.push({ 
         'id': uid, 
@@ -110,9 +107,7 @@ export function apply(ctx: Context, config: Config) {
       });
       if (comments.length > 0)
         chain.push({ 
-          'id': session.selfId, 
           'text': `----评论区，内容前为评论编号，破折号后为评论人昵称----`, 
-          'username': botInfo.user.name 
         });
       for (const comment of comments) {
         const { username: commentName, content: commentContent, uid: commentUid, cid: commentId } = comment;
