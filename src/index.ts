@@ -152,26 +152,28 @@ export function apply(ctx: Context, config: Config) {
         if (ct.length > 500) return '内容过长！';
         if (ct.length < 1) return '内容过短！';
         ct = "“" + ct + "”"
-        const guildList = await session.bot.getGuildIter();
-        if (!replyId) {
-          if (uid !== buid) {
-            for await (let i of guildList) {
-              if (i.id === bgid) {
-                await session.bot.sendMessage(bgid, h("at", {id: buid}) + `你的${id}号瓶子有新评论！\n\n${ct}\n\n发送【捞漂流瓶 ${id}】查看详情`)
-                break
+        for (const bot of ctx.bots) {
+          const guildList = await bot.getGuildIter();
+          if (!replyId) {
+            if (uid !== buid) {
+              for await (let i of guildList) {
+                if (i.id === bgid) {
+                  await bot.sendMessage(bgid, h("at", {id: buid}) + ` 你的${id}号瓶子有新评论！\n\n${ct}\n\n发送【捞漂流瓶 ${id}】查看详情`)
+                  break
+                }
               }
             }
-          }
-        } else {
-          const { username: commentUsername, uid: cuid, gid: cgid } = comment;
-          ct = `回复 ${replyId}. ${commentUsername}：${ct}`;
-          if (cuid !== uid) {
-            for await (let i of guildList) {
-              if (i.id === bgid) {
-                const atUser = h("at", {id: cuid});
-                const message = `${atUser}${id}号瓶子中你的${replyId}号评论有新回复！\n\n${ct}\n\n发送【捞漂流瓶 ${id}】查看详情`;
-                await session.bot.sendMessage(cgid, message);
-                break;
+          } else {
+            const { username: commentUsername, uid: cuid, gid: cgid } = comment;
+            ct = `回复 ${replyId}. ${commentUsername}：${ct}`;
+            if (cuid !== uid) {
+              for await (let i of guildList) {
+                if (i.id === bgid) {
+                  const atUser = h("at", {id: cuid});
+                  const message = `${atUser} ${id}号瓶子中你的${replyId}号评论有新回复！\n\n${ct}\n\n发送【捞漂流瓶 ${id}】查看详情`;
+                  await bot.sendMessage(cgid, message);
+                  break;
+                }
               }
             }
           }
