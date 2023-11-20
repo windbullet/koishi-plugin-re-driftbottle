@@ -26,6 +26,9 @@ export interface Comment {
 export interface Config {
   manager: string[];
   allowPic: boolean;
+  usePage: boolean;
+  commentLimit?: number;
+  bottleLimit?: number;
 }
 
 declare module 'koishi' {
@@ -35,14 +38,34 @@ declare module 'koishi' {
   }
 }
 
-export const Config: Schema<Config> = Schema.object({
-  manager: Schema.array(Schema.string())
-    .required()
-    .description('管理员QQ，一个项目填一个ID'),
-  allowPic: Schema.boolean()
-    .description('是否允许发送图片')
-    .default(true)
-})
+export const Config: Schema<Config> = Schema.intersect([
+  Schema.object({
+    manager: Schema.array(Schema.string())
+      .required()
+      .description('管理员QQ，一个项目填一个ID'),
+    allowPic: Schema.boolean()
+      .description('是否允许发送图片')
+      .default(true),
+  }),
+  Schema.intersect([
+    Schema.object({
+      usePage: Schema.boolean()
+      .description('显示评论或查看我的瓶子时使用分页以避免消息过长')
+      .default(false)
+    }),
+    Schema.union([
+      Schema.object({
+        usePage: Schema.const(true).required(),
+        commentLimit: Schema.number().description("捞漂流瓶时一页显示多少个评论").required(),
+        bottleLimit: Schema.number().description("查看我的瓶子时一页显示多少个瓶子").required(),
+      }),
+      Schema.object({
+        usePage: Schema.const(false),
+      })
+    ])
+  ])
+  
+])
 
 export function apply(ctx: Context, config: Config) {
   extendTables(ctx)
@@ -80,10 +103,10 @@ export function apply(ctx: Context, config: Config) {
       return '你的漂流瓶扔出去了！';
     })
 
-  ctx.command("漂流瓶.捞漂流瓶 [bottleId:posint]")
+  ctx.command("漂流瓶.捞漂流瓶 [bottleId:posint] [page:posint]")
     .alias("捞漂流瓶")
-    .usage('捞漂流瓶 <瓶子编号>\n不填瓶子编号则随机捞一个瓶子')
-    .action(async ({ session }, bottleId) => {
+    .usage('捞漂流瓶 <瓶子编号> [分页]\n不填瓶子编号则随机捞一个瓶子')
+    .action(async ({ session }, bottleId, page) => {
       let bottles;
       if (!bottleId) {
         bottles = await ctx.database.get("bottle", {})
@@ -95,10 +118,16 @@ export function apply(ctx: Context, config: Config) {
 
       const bottle = bottles[Random.int(0, bottles.length)];
       const {content, id, uid, username} = bottle;
-      const comments = await ctx.database.get('comment', { bid: id });
+      const commentsLength = (await ctx.database.get("comment", {bid: id})).length;
+      const comments = await ctx.database
+        .select('comment')
+        .where({bid: id})
+        .limit(config.usePage ? config.commentLimit : Infinity)
+        .offset(config.usePage ? ((page ?? 1) - 1) * config.commentLimit : 0)
+        .execute()
       const chain = [];
       chain.push({ 
-      'text': `你捞到了一只编号为${id}的瓶子！破折号后是漂流瓶主人的昵称！\n发送“评论瓶子 ${id} <内容>”可以在下面评论这只瓶子，发送“评论瓶子 [-r <评论编号>] ${id} <内容>”可以回复评论区的评论`, 
+      'text': `你捞到了一只编号为${id}的瓶子！破折号后是漂流瓶主人的昵称！\n发送“捞漂流瓶 ${id} [分页]”可以查看评论区的其他分页\n发送“评论瓶子 ${id} <内容>”可以在下面评论这只瓶子\n发送“评论瓶子 [-r <评论编号>] ${id} <内容>”可以回复评论区的评论\n正文：`, 
       });
       chain.push({ 
         'id': uid, 
@@ -122,7 +151,7 @@ export function apply(ctx: Context, config: Config) {
           result += i.id + i.text + "——" + i.username + "\n"
         }
       }
-
+      if (config.usePage && comments.length > 0) result += (`\n第${page ?? 1}/${Math.ceil(commentsLength / config.commentLimit)}页`)
       return result;
 
     })
@@ -219,17 +248,25 @@ export function apply(ctx: Context, config: Config) {
         return '评论删除了！';
       });
 
-    ctx.command('漂流瓶.查看我的瓶子', '')
+    ctx.command('漂流瓶.查看我的瓶子 [page:posint]', '')
       .alias('查看我的瓶子')
-      .action(async ({ session }) => {
-        const bottles = await ctx.database.get('bottle', { uid: session.event.user.id });
+      .usage('查看我的瓶子 [分页]')
+      .action(async ({ session }, page) => {
+        const bottlesLength = (await ctx.database.get("bottle", {uid: session.event.user.id})).length
+        const bottles = await ctx.database
+          .select("bottle")
+          .where({ uid: session.event.user.id })
+          .limit(config.usePage ? config.bottleLimit : Infinity)
+          .offset(config.usePage ? ((page ?? 1) - 1) * config.bottleLimit : 0)
+          .execute()
         if (!bottles || bottles.length < 1) return '你还没有扔过瓶子！';
         const chain = [];
         chain.push(`你扔出去的瓶子有：`);
         for (const bottle of bottles) {
           const { content, id } = bottle;
-          chain.push(`${content}——瓶子编号：${id}`);
+          chain.push(`瓶子编号${id}：${content}`);
         }
+        if (config.usePage) chain.push(`\n第${page ?? 1}/${Math.ceil(bottlesLength / config.bottleLimit)}页`);
         return chain.join('\n');
       })
 
