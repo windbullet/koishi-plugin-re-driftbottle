@@ -251,22 +251,27 @@ export function apply(ctx: Context, config: Config) {
     ctx.command('漂流瓶.查看我的瓶子 [page:posint]', '')
       .alias('查看我的瓶子')
       .usage('查看我的瓶子 [分页]')
-      .action(async ({ session }, page) => {
+      .option('list', '-l 只输出瓶子编号，无分页')
+      .action(async ({ session, options }, page) => {
         const bottlesLength = (await ctx.database.get("bottle", {uid: session.event.user.id})).length
         const bottles = await ctx.database
           .select("bottle")
           .where({ uid: session.event.user.id })
-          .limit(config.usePage ? config.bottleLimit : Infinity)
-          .offset(config.usePage ? ((page ?? 1) - 1) * config.bottleLimit : 0)
+          .limit(!config.usePage || options.list ? Infinity : config.bottleLimit)
+          .offset(!config.usePage || options.list ? 0 : ((page ?? 1) - 1) * config.bottleLimit)
           .execute()
         if (!bottles || bottles.length < 1) return '你还没有扔过瓶子！';
         const chain = [];
         chain.push(`你扔出去的瓶子有：`);
-        for (const bottle of bottles) {
-          const { content, id } = bottle;
-          chain.push(`瓶子编号${id}：${content}`);
+        if (options.list) {
+          chain.push(bottles.map(bottle => bottle.id).join(' | '));
+        } else {
+          for (const bottle of bottles) {
+            const { content, id } = bottle;
+            chain.push(`瓶子编号${id}：${content}`);
+          }
+          if (config.usePage) chain.push(`\n第${page ?? 1}/${Math.ceil(bottlesLength / config.bottleLimit)}页`);
         }
-        if (config.usePage) chain.push(`\n第${page ?? 1}/${Math.ceil(bottlesLength / config.bottleLimit)}页`);
         return chain.join('\n');
       })
 
@@ -275,7 +280,7 @@ export function apply(ctx: Context, config: Config) {
       .example('删除过期瓶子 <天数>')
       .action(async ({ session }, days) => {
         if (!days) return '请输入天数！';
-        if (!config.manager.includes(session.userId)) return '你没有权限删除瓶子！';
+        if (!config.manager.includes(session.event.user.id)) return '你没有权限删除瓶子！';
         const deleteDays = days;
         const bottles = await ctx.database.get('bottle', { time: { $lt: Time.getDateNumber() - deleteDays } });
         if (!bottles || bottles.length < 1) return '没有过期的瓶子！';
