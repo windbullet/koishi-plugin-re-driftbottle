@@ -4,6 +4,8 @@ import { userInfo } from 'os'
 
 export const name = 're-driftbottle'
 
+export const usage = `本插件翻新自https://www.npmjs.com/package/koishi-plugin-driftbottle，原插件因长期未维护已无法正常工作`
+
 export interface Bottle {
   id: number;
   uid: string;
