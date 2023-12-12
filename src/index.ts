@@ -1,4 +1,4 @@
-import { Context, Schema, Time, Random, h, $ } from 'koishi'
+import { Context, Schema, Time, Random, h, $, sleep, Session } from 'koishi'
 import { userInfo } from 'os'
 
 
@@ -29,6 +29,9 @@ export interface Config {
   usePage: boolean;
   commentLimit?: number;
   bottleLimit?: number;
+  randomSend: boolean;
+  minInterval?: number;
+  maxInterval?: number;
 }
 
 declare module 'koishi' {
@@ -50,8 +53,8 @@ export const Config: Schema<Config> = Schema.intersect([
   Schema.intersect([
     Schema.object({
       usePage: Schema.boolean()
-      .description('显示评论或查看我的瓶子时使用分页以避免消息过长')
-      .default(false)
+        .description('显示评论或查看我的瓶子时使用分页以避免消息过长')
+        .default(false)
     }),
     Schema.union([
       Schema.object({
@@ -63,12 +66,66 @@ export const Config: Schema<Config> = Schema.intersect([
         usePage: Schema.const(false),
       })
     ])
+  ]),
+  Schema.intersect([
+    Schema.object({
+      randomSend: Schema.boolean()
+        .description('是否会随机时刻在随机群发送随机漂流瓶')
+        .default(false),
+    }),
+    Schema.union([
+      Schema.object({
+        randomSend: Schema.const(true).required(),
+        minInterval: Schema.number().description("在随机群发送随机漂流瓶的最小间隔（秒）").required(),
+        maxInterval: Schema.number().description("在随机群发送随机漂流瓶的最大间隔（秒）").required(),
+      }),
+      Schema.object({
+        randomSend: Schema.const(false),
+      })
+    ])
   ])
   
 ])
 
 export function apply(ctx: Context, config: Config) {
   extendTables(ctx)
+
+  if (config.randomSend) {
+    let flag = false
+    ctx.on("ready", async () => {
+      while (true) {
+        await sleep(Random.int(config.minInterval * 1000, config.maxInterval * 1000 + 1))
+        if (flag) break
+        for (let bot of ctx.bots) {
+          let guilds = []
+          for await (let i of bot.getGuildIter()) {
+            guilds.push(i)
+          }
+          let bottles;
+          bottles = await ctx.database.get("bottle", {})
+    
+          const bottle = bottles[Random.int(0, bottles.length)];
+          const {content, id, uid, username} = bottle;
+          const chain = [];
+          chain.push({ 
+          'text': `一只编号为${id}的瓶子漂上了岸！破折号后是漂流瓶主人的昵称！\n发送“捞漂流瓶 ${id}”可以查看详细信息\n`, 
+          });
+          chain.push({ 
+            'id': uid, 
+            'text': content, 
+            'username': username
+          });
+          let result = ""
+          result += chain[0].text + '\n\n' + chain[1].text + `——${chain[1].username}`;
+          await bot.sendMessage(Random.pick(guilds).id, result)
+        }
+      }
+    })
+  
+    ctx.on("dispose", async () => {
+      flag = true
+    })
+  }
 
   ctx.command("漂流瓶", "漂流瓶")
   
@@ -289,6 +346,7 @@ export function apply(ctx: Context, config: Config) {
         await ctx.database.remove('comment', { bid: { $in: bottles.map((bottle) => bottle.id) } });
         return '过期瓶子已经被删除！';
       });
+
 }    
 async function extendTables(ctx) {
   await ctx.model.extend('bottle', {
@@ -310,9 +368,10 @@ async function extendTables(ctx) {
     content: 'text',
     time: 'unsigned',
   }, {primary: "id", autoInc: true});
-
-  await ctx.model.extend('nameCache', {
-    id: 'unsigned'
-  })
   
+}
+
+async function sendBottle(ctx: Context, config: Config) {
+    
+    
 }
