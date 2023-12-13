@@ -1,3 +1,6 @@
+// This file is modified from https://www.npmjs.com/package/koishi-plugin-driftbottle, under the MIT license
+// Copyright haku530 2023
+
 import { Context, Schema, Time, Random, h, $, sleep, Session } from 'koishi'
 import { userInfo } from 'os'
 
