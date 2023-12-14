@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-re-driftbottle",
   "description": "漂流瓶重制版，可以在新版koishi使用了，也支持adapter-red！",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
