@@ -97,11 +97,9 @@ export function apply(ctx: Context, config: Config) {
   extendTables(ctx)
 
   if (config.randomSend) {
-    let flag = false
     ctx.on("ready", async () => {
-      while (true) {
-        await sleep(Random.int(config.minInterval * 1000, config.maxInterval * 1000 + 1))
-        if (flag) break
+      while (true) {    
+        await new Promise(res => ctx.setTimeout(res, Random.int(config.minInterval * 1000, config.maxInterval * 1000 + 1)))
         for (let bot of ctx.bots) {
           let guilds = []
           for await (let i of bot.getGuildIter()) {
@@ -126,10 +124,6 @@ export function apply(ctx: Context, config: Config) {
           await bot.sendMessage(Random.pick(guilds).id, result)
         }
       }
-    })
-  
-    ctx.on("dispose", async () => {
-      flag = true
     })
   }
 
