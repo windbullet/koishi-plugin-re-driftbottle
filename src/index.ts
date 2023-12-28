@@ -1,7 +1,7 @@
 // This file is modified from https://www.npmjs.com/package/koishi-plugin-driftbottle, under the MIT license
 // Copyright haku530 2023
 
-import { Context, Schema, Time, Random, h, $, sleep, Session } from 'koishi'
+import { Context, Schema, Time, Random, h, $, sleep, Session, Logger, Dict } from 'koishi'
 import { userInfo } from 'os'
 
 
@@ -14,6 +14,7 @@ export interface Bottle {
   id: number;
   uid: string;
   gid: string;
+  cnid: string;
   username: string;
   content: string;
   time: number;
@@ -24,6 +25,7 @@ export interface Comment {
   bid: number;
   uid: string;
   gid: string;
+  cnid: string;
   username: string;
   content: string;
   time: number;
@@ -33,11 +35,14 @@ export interface Config {
   manager: string[];
   allowPic: boolean;
   usePage: boolean;
+  allowDropOthers: boolean;
+  maxRetry: number;
   commentLimit?: number;
   bottleLimit?: number;
   randomSend: boolean;
   minInterval?: number;
   maxInterval?: number;
+  guildId?: Dict
 }
 
 declare module 'koishi' {
@@ -55,6 +60,12 @@ export const Config: Schema<Config> = Schema.intersect([
     allowPic: Schema.boolean()
       .description('是否允许发送图片')
       .default(true),
+    allowDropOthers: Schema.boolean()
+      .description('是否允许普通用户扔其他人的消息')
+      .default(false),
+    maxRetry: Schema.number()
+      .description('漂流瓶发送失败时的最大重试次数')
+      .default(5),
   }),
   Schema.intersect([
     Schema.object({
@@ -84,6 +95,9 @@ export const Config: Schema<Config> = Schema.intersect([
         randomSend: Schema.const(true).required(),
         minInterval: Schema.number().description("在随机群发送随机漂流瓶的最小间隔（秒）").required(),
         maxInterval: Schema.number().description("在随机群发送随机漂流瓶的最大间隔（秒）").required(),
+        guildId:Schema.dict(Schema.string())
+          .role("table")
+          .description("会发送消息的群聊ID，不填写平台名及ID代表该平台所有群，填写平台名不填写频道ID则代表不在该平台发消息\n\n键为平台（平台名以右下角状态栏为准），值为频道ID（频道ID间以半角逗号隔开）"),
       }),
       Schema.object({
         randomSend: Schema.const(false),
@@ -101,27 +115,110 @@ export function apply(ctx: Context, config: Config) {
       while (true) {    
         await new Promise(res => ctx.setTimeout(res, Random.int(config.minInterval * 1000, config.maxInterval * 1000 + 1)))
         for (let bot of ctx.bots) {
-          let guilds = []
-          for await (let i of bot.getGuildIter()) {
-            guilds.push(i)
+          let guilds = config.guildId[bot.platform]
+          if (guilds === undefined) {
+            let guilds = []
+            for await (let i of bot.getGuildIter()) {
+              guilds.push(i)
+            }
+            let bottles;
+            bottles = await ctx.database.get("bottle", {})
+      
+            const bottle = bottles[Random.int(0, bottles.length)];
+            const {content, id, uid, username} = bottle;
+            const chain = [];
+            chain.push({ 
+            'text': `一只编号为${id}的瓶子漂上了岸！破折号后是漂流瓶主人的昵称！\n发送“捞漂流瓶 ${id}”可以查看详细信息\n`, 
+            });
+            chain.push({ 
+              'id': uid, 
+              'text': content, 
+              'username': username
+            });
+            let result = ""
+            result += chain[0].text + '\n\n' + chain[1].text + `——${chain[1].username}`
+            let retry = 0
+            while (true) {
+              let guildId = Random.pick(guilds).id
+              try {
+                await bot.sendMessage(guildId, result)
+                break
+              } catch (e) {
+                if (e?.response?.status === 500) {
+                  let logger = new Logger('re-driftbottle')
+                  logger.warn("漂流瓶发送失败：" + e)
+                  break
+                } else {
+                  try {
+                    let channels = []
+                    for await (let channel of bot.getChannelIter(guildId)) {
+                      if (channel.type === 0) channels.push(channel)
+                    }
+                    await bot.sendMessage(Random.pick(channels).id, result)
+                    break
+                  } catch (e) {
+                    retry++
+                    if (retry > config.maxRetry) {
+                      let logger = new Logger('re-driftbottle')
+                      logger.warn(`漂流瓶发送失败（已重试${config.maxRetry}次）：` + e)
+                      break
+                    }
+                    continue
+                  }
+                }
+              }
+            }
+          } else {
+            console.log(config.guildId)
+            if (guilds === null || guilds.length === 0) continue
+            let bottles;
+            bottles = await ctx.database.get("bottle", {})
+      
+            const bottle = bottles[Random.int(0, bottles.length)];
+            const {content, id, uid, username} = bottle;
+            const chain = [];
+            chain.push({ 
+            'text': `一只编号为${id}的瓶子漂上了岸！破折号后是漂流瓶主人的昵称！\n发送“捞漂流瓶 ${id}”可以查看详细信息\n`, 
+            });
+            chain.push({ 
+              'id': uid, 
+              'text': content, 
+              'username': username
+            });
+            let result = ""
+            result += chain[0].text + '\n\n' + chain[1].text + `——${chain[1].username}`
+            let retry = 0
+            while (true) {
+              let guildId = Random.pick(guilds.split(","))
+              try {
+                await bot.sendMessage(guildId as string, result)
+                break
+              } catch (e) {
+                if (e?.response?.status === 500) {
+                  let logger = new Logger('re-driftbottle')
+                  logger.warn("漂流瓶发送失败：" + e)
+                  break
+                } else {
+                  try {
+                    let channels = []
+                    for await (let channel of bot.getChannelIter(guildId as string)) {
+                      if (channel.type === 0) channels.push(channel)
+                    }
+                    await bot.sendMessage(Random.pick(channels).id, result)
+                    break
+                  } catch (e) {
+                    retry++
+                    if (retry > config.maxRetry) {
+                      let logger = new Logger('re-driftbottle')
+                      logger.warn(`漂流瓶发送失败（已重试${config.maxRetry}次）：` + e)
+                      break
+                    }
+                    continue
+                  }
+                }
+              }
+            }
           }
-          let bottles;
-          bottles = await ctx.database.get("bottle", {})
-    
-          const bottle = bottles[Random.int(0, bottles.length)];
-          const {content, id, uid, username} = bottle;
-          const chain = [];
-          chain.push({ 
-          'text': `一只编号为${id}的瓶子漂上了岸！破折号后是漂流瓶主人的昵称！\n发送“捞漂流瓶 ${id}”可以查看详细信息\n`, 
-          });
-          chain.push({ 
-            'id': uid, 
-            'text': content, 
-            'username': username
-          });
-          let result = ""
-          result += chain[0].text + '\n\n' + chain[1].text + `——${chain[1].username}`;
-          await bot.sendMessage(Random.pick(guilds).id, result)
         }
       }
     })
@@ -136,10 +233,11 @@ export function apply(ctx: Context, config: Config) {
       let quote = session.event.message.quote
 
       if (!message && !quote) return '请输入内容或引用回复一条消息'
-      if (quote && !config.manager.includes(session.event.user.id) && quote.user.id !== session.event.user.id) return '你没有权限扔别人的漂流瓶！'
+      if ((quote && !config.manager.includes(session.event.user.id) && quote.user.id !== session.event.user.id) && !config.allowDropOthers) return '你没有权限扔别人的漂流瓶！'
 
       let uid = quote?.user.id ?? session.event.user.id
-      let gid = session.event.channel.id
+      let gid = session.event.guild.id
+      let cnid = session.event.channel.id
       let content = quote?.content ?? message;
 
       message = config.allowPic ? message : message.replace(/<.*?>/g, '')
@@ -152,6 +250,7 @@ export function apply(ctx: Context, config: Config) {
       await ctx.database.create('bottle', {
         uid: uid, 
         gid: gid, 
+        cnid: cnid,
         username: session.username,
         content: "“" + content + "”", 
         time: Time.getDateNumber()
@@ -209,7 +308,21 @@ export function apply(ctx: Context, config: Config) {
         }
       }
       if (config.usePage && comments.length > 0) result += (`\n第${page ?? 1}/${Math.ceil(commentsLength / config.commentLimit)}页`)
-      return result;
+      let retry = 0
+      while (true) {
+        try {
+          await session.bot.sendMessage(session.event.channel.id, result);
+          break
+        } catch (e) {
+          retry++
+          if (retry > config.maxRetry) {
+            let logger = new Logger("re-driftbottle");
+            logger.warn(`漂流瓶发送失败（已重试${config.maxRetry}次）：` + e)
+            return "漂流瓶发送失败，请查看日志！"
+          }
+          continue
+        }
+      }
 
     })
 
@@ -232,33 +345,42 @@ export function apply(ctx: Context, config: Config) {
         if (!ct && !quote) return '请输入内容或引用回复一条消息';
         if (quote && !config.manager.includes(session.event.user.id) && quote.user.id !== session.event.user.id) return '你没有权限扔别人的漂流瓶！';
         let uid = quote?.user.id ?? session.event.user.id;
-        let gid = session.event.channel.id;
-        const { uid: buid, gid: bgid } = bottle;
+        let gid = session.event.guild.id;
+        let cnid = session.event.channel.id;
+        const { uid: buid, gid: bgid, cnid: bcnid } = bottle;
         ct = config.allowPic ? ct : ct.replace(/<.*?>/g, '');
         if (ct.length > 500) return '内容过长！';
         if (ct.length < 1) return '内容过短！';
         ct = "“" + ct + "”"
         if (session.platform !== "qq") {
           for (const bot of ctx.bots) {
-            const guildList = await bot.getGuildIter();
+            const guildList = bot.getGuildIter();
             if (!replyId) {
               if (uid !== buid) {
                 for await (let i of guildList) {
                   if (i.id === bgid) {
-                    await bot.sendMessage(bgid, h("at", {id: buid}) + ` 你的${id}号瓶子有新评论！\n\n${ct}\n\n发送【捞漂流瓶 ${id}】查看详情`)
+                    try {
+                      await bot.sendMessage(bgid, h("at", {id: buid}) + ` 你的${id}号瓶子有新评论！\n\n${ct}\n\n发送【捞漂流瓶 ${id}】查看详情`)
+                    } catch (e) {
+                      await bot.sendMessage(bcnid, h("at", {id: buid}) + ` 你的${id}号瓶子有新评论！\n\n${ct}\n\n发送【捞漂流瓶 ${id}】查看详情`)
+                    }
                     break
                   }
                 }
               }
             } else {
-              const { username: commentUsername, uid: cuid, gid: cgid } = comment;
+              const { username: commentUsername, uid: cuid, gid: cgid, cnid: ccnid } = comment;
               ct = `回复 ${replyId}. ${commentUsername}：${ct}`;
               if (cuid !== uid) {
                 for await (let i of guildList) {
                   if (i.id === bgid) {
                     const atUser = h("at", {id: cuid});
                     const message = `${atUser} ${id}号瓶子中你的${replyId}号评论有新回复！\n\n${ct}\n\n发送【捞漂流瓶 ${id}】查看详情`;
-                    await bot.sendMessage(cgid, message);
+                    try {
+                      await bot.sendMessage(cgid, message);
+                    } catch (e) {
+                      await bot.sendMessage(ccnid, message)
+                    }
                     break;
                   }
                 }
@@ -273,6 +395,7 @@ export function apply(ctx: Context, config: Config) {
           bid: id, 
           uid: uid, 
           gid: gid, 
+          cnid: cnid,
           username: session.username,
           content: ct, 
           time: Time.getDateNumber() 
@@ -355,6 +478,7 @@ async function extendTables(ctx) {
     id: 'unsigned',
     uid: 'string',
     gid: 'string',
+    cnid: 'string',
     username: 'string',
     content: 'string',
     time: 'unsigned',
@@ -366,6 +490,7 @@ async function extendTables(ctx) {
     bid: 'unsigned',
     uid: 'string',
     gid: 'string',
+    cnid: 'string',
     username: 'string',
     content: 'text',
     time: 'unsigned',
