@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-re-driftbottle",
   "description": "漂流瓶重制版，可以在新版koishi使用了，也支持adapter-red！",
-  "version": "0.3.12",
+  "version": "0.4.3",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
@@ -14,7 +14,6 @@
     "type": "git",
     "url": "git+https://github.com/windbullet/koishi-plugin-re-driftbottle.git"
   },
-  "scripts": {},
   "keywords": [
     "chatbot",
     "koishi",
@@ -25,8 +24,10 @@
   },
   "koishi": {
     "service": {
-      "required": ["database"],    
-      "optional": [],       
+      "required": [
+        "database"
+      ],
+      "optional": [],
       "implements": []
     }
   }

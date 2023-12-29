@@ -169,7 +169,6 @@ export function apply(ctx: Context, config: Config) {
               }
             }
           } else {
-            console.log(config.guildId)
             if (guilds === null || guilds.length === 0) continue
             let bottles;
             bottles = await ctx.database.get("bottle", {})
@@ -234,10 +233,9 @@ export function apply(ctx: Context, config: Config) {
 
       if (!message && !quote) return '请输入内容或引用回复一条消息'
       if ((quote && !config.manager.includes(session.event.user.id) && quote.user.id !== session.event.user.id) && !config.allowDropOthers) return '你没有权限扔别人的漂流瓶！'
-
       let uid = quote?.user.id ?? session.event.user.id
-      let gid = session.event.guild.id
-      let cnid = session.event.channel.id
+      let gid = session.event?.guild?.id
+      let cnid = session.event?.channel?.id
       let content = quote?.content ?? message;
 
       message = config.allowPic ? message : message.replace(/<.*?>/g, '')
@@ -272,8 +270,9 @@ export function apply(ctx: Context, config: Config) {
         if (!bottles || bottles.length < 1) return "没有这个瓶子！"
       }
 
-      const bottle = bottles[Random.int(0, bottles.length)];
-      const {content, id, uid, username} = bottle;
+      const bottle = bottles[Random.int(0, 
+        bottles.length)];
+      const {content, id, uid, username, time} = bottle;
       const commentsLength = (await ctx.database.get("comment", {bid: id})).length;
       const comments = await ctx.database
         .select('comment')
@@ -283,28 +282,31 @@ export function apply(ctx: Context, config: Config) {
         .execute()
       const chain = [];
       chain.push({ 
-      'text': h.text(`你捞到了一只编号为${id}的瓶子！破折号后是漂流瓶主人的昵称！\n发送“捞漂流瓶 ${id} [分页]”可以查看评论区的其他分页\n发送“评论瓶子 ${id} <内容>”可以在下面评论这只瓶子\n发送“评论瓶子 [-r <评论编号>] ${id} <内容>”可以回复评论区的评论\n正文：`), 
+      'text': h.text(`你捞到了一只编号为${id}的瓶子！内容前是漂流瓶主人的昵称，内容后是扔漂流瓶的日期！\n发送“捞漂流瓶 ${id} [分页]”可以查看评论区的其他分页\n发送“评论瓶子 ${id} <内容>”可以在下面评论这只瓶子\n发送“评论瓶子 [-r <评论编号>] ${id} <内容>”可以回复评论区的评论\n正文：`), 
       });
       chain.push({ 
         'id': uid, 
         'text': content, 
-        'username': username
+        'username': username,
+        'time': time * 86400000
       });
       if (comments.length > 0)
         chain.push({ 
-          'text': `----评论区，内容前为评论编号，破折号后为评论人昵称----`, 
+          'text': `----评论区，内容前为评论编号和用户昵称----`, 
         });
       for (const comment of comments) {
         const { username: commentName, content: commentContent, uid: commentUid, cid: commentId } = comment;
         chain.push({ 'id': commentId + ".", 'text': commentContent, 'username': commentName });
       }
+      let bottleTime = new Date(chain[1].time);
+      let bottleTimeStr = `${bottleTime.getFullYear()}年${bottleTime.getMonth() + 1}月${bottleTime.getDate()}日`
       let result = ""
-      result += chain[0].text + '\n\n' + chain[1].text + `——${chain[1].username}`;
+      result += chain[0].text + '\n\n' + `${chain[1].username}：\n${chain[1].text}\n${bottleTimeStr}`;
       
       if (comments.length > 0) {
         result += "\n\n" + chain[2].text + "\n"
         for (let i of chain.slice(3)) {
-          result += i.id + i.text + "——" + i.username + "\n"
+          result += i.id + i.username + "：" + i.text + "\n"
         }
       }
       if (config.usePage && comments.length > 0) result += (`\n第${page ?? 1}/${Math.ceil(commentsLength / config.commentLimit)}页`)
@@ -345,8 +347,8 @@ export function apply(ctx: Context, config: Config) {
         if (!ct && !quote) return '请输入内容或引用回复一条消息';
         if (quote && !config.manager.includes(session.event.user.id) && quote.user.id !== session.event.user.id) return '你没有权限扔别人的漂流瓶！';
         let uid = quote?.user.id ?? session.event.user.id;
-        let gid = session.event.guild.id;
-        let cnid = session.event.channel.id;
+        let gid = session.event?.guild?.id;
+        let cnid = session.event?.channel?.id;
         const { uid: buid, gid: bgid, cnid: bcnid } = bottle;
         ct = config.allowPic ? ct : ct.replace(/<.*?>/g, '');
         if (ct.length > 500) return '内容过长！';
@@ -354,17 +356,34 @@ export function apply(ctx: Context, config: Config) {
         ct = "“" + ct + "”"
         if (session.platform !== "qq") {
           for (const bot of ctx.bots) {
+            let flag = true
             const guildList = bot.getGuildIter();
+            let friendList
+            try {
+              friendList = bot.getFriendIter();
+            } catch {
+              flag = false
+            }
             if (!replyId) {
               if (uid !== buid) {
                 for await (let i of guildList) {
-                  if (i.id === bgid) {
+                  if (i.id === bgid || i.id === bcnid) {
                     try {
-                      await bot.sendMessage(bgid, h("at", {id: buid}) + ` 你的${id}号瓶子有新评论！\n\n${ct}\n\n发送【捞漂流瓶 ${id}】查看详情`)
-                    } catch (e) {
+                      if (bcnid.length === 0) throw new Error('bcnid is empty');
                       await bot.sendMessage(bcnid, h("at", {id: buid}) + ` 你的${id}号瓶子有新评论！\n\n${ct}\n\n发送【捞漂流瓶 ${id}】查看详情`)
+                    } catch (e) {
+                      await bot.sendMessage(bgid, h("at", {id: buid}) + ` 你的${id}号瓶子有新评论！\n\n${ct}\n\n发送【捞漂流瓶 ${id}】查看详情`)
                     }
+                    flag = false
                     break
+                  }
+                }
+                if (flag) {
+                  for await (let i of friendList) {
+                    if (i.id === bcnid.replace("private:", "")) {
+                      await bot.sendMessage(bcnid, ` 你的${id}号瓶子有新评论！\n\n${ct}\n\n发送【捞漂流瓶 ${id}】查看详情`)
+                      break
+                    }
                   }
                 }
               }
@@ -373,15 +392,25 @@ export function apply(ctx: Context, config: Config) {
               ct = `回复 ${replyId}. ${commentUsername}：${ct}`;
               if (cuid !== uid) {
                 for await (let i of guildList) {
-                  if (i.id === bgid) {
+                  if (i.id === bgid || i.id === ccnid) {
                     const atUser = h("at", {id: cuid});
                     const message = `${atUser} ${id}号瓶子中你的${replyId}号评论有新回复！\n\n${ct}\n\n发送【捞漂流瓶 ${id}】查看详情`;
                     try {
-                      await bot.sendMessage(cgid, message);
-                    } catch (e) {
+                      if (ccnid.length === 0) throw new Error('ccnid is empty');
                       await bot.sendMessage(ccnid, message)
+                    } catch (e) {
+                      await bot.sendMessage(cgid, message);
                     }
+                    flag = false
                     break;
+                  }
+                }
+                if (flag) {
+                  for await (let i of friendList) {
+                    if (i.id === ccnid.replace("private:", "")) {
+                      await bot.sendMessage(bcnid, ` ${id}号瓶子中你的${replyId}号评论有新回复！\n\n${ct}\n\n发送【捞漂流瓶 ${id}】查看详情`)
+                      break
+                    }
                   }
                 }
               }
@@ -480,7 +509,7 @@ async function extendTables(ctx) {
     gid: 'string',
     cnid: 'string',
     username: 'string',
-    content: 'string',
+    content: 'text',
     time: 'unsigned',
   }, {primary: "id", autoInc: true});
 
