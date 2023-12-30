@@ -146,7 +146,7 @@ export function apply(ctx: Context, config: Config) {
               } catch (e) {
                 if (e?.response?.status === 500) {
                   let logger = new Logger('re-driftbottle')
-                  logger.warn("漂流瓶发送失败：" + e)
+                  logger.warn(`漂流瓶发送失败：` + e.stack)
                   break
                 } else {
                   try {
@@ -160,7 +160,7 @@ export function apply(ctx: Context, config: Config) {
                     retry++
                     if (retry > config.maxRetry) {
                       let logger = new Logger('re-driftbottle')
-                      logger.warn(`漂流瓶发送失败（已重试${config.maxRetry}次）：` + e)
+                      logger.warn(`漂流瓶发送失败（已重试${config.maxRetry}次）：` + e.stack)
                       break
                     }
                     continue
@@ -195,7 +195,7 @@ export function apply(ctx: Context, config: Config) {
               } catch (e) {
                 if (e?.response?.status === 500) {
                   let logger = new Logger('re-driftbottle')
-                  logger.warn("漂流瓶发送失败：" + e)
+                  logger.warn(`漂流瓶发送失败：` + e.stack)
                   break
                 } else {
                   try {
@@ -209,7 +209,7 @@ export function apply(ctx: Context, config: Config) {
                     retry++
                     if (retry > config.maxRetry) {
                       let logger = new Logger('re-driftbottle')
-                      logger.warn(`漂流瓶发送失败（已重试${config.maxRetry}次）：` + e)
+                      logger.warn(`漂流瓶发送失败（已重试${config.maxRetry}次）：` + e.stack)
                       break
                     }
                     continue
@@ -319,7 +319,7 @@ export function apply(ctx: Context, config: Config) {
           retry++
           if (retry > config.maxRetry) {
             let logger = new Logger("re-driftbottle");
-            logger.warn(`漂流瓶发送失败（已重试${config.maxRetry}次）：` + e)
+            logger.warn(`漂流瓶发送失败（已重试${config.maxRetry}次）：` + e.stack)
             return "漂流瓶发送失败，请查看日志！"
           }
           continue
