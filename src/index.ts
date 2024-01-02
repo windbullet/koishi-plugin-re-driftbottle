@@ -37,6 +37,8 @@ export interface Config {
   usePage: boolean;
   allowDropOthers: boolean;
   maxRetry: number;
+  retryInterval: number;
+  debugMode: boolean;
   commentLimit?: number;
   bottleLimit?: number;
   randomSend: boolean;
@@ -66,6 +68,12 @@ export const Config: Schema<Config> = Schema.intersect([
     maxRetry: Schema.number()
       .description('漂流瓶发送失败时的最大重试次数')
       .default(5),
+    retryInterval: Schema.number()
+      .description('漂流瓶发送失败时的重试间隔（毫秒）')
+      .default(500),
+    debugMode: Schema.boolean()
+      .description('漂流瓶发送失败时，在日志显示调用栈')
+      .default(false)
   }),
   Schema.intersect([
     Schema.object({
@@ -123,48 +131,43 @@ export function apply(ctx: Context, config: Config) {
             }
             let bottles;
             bottles = await ctx.database.get("bottle", {})
-      
-            const bottle = bottles[Random.int(0, bottles.length)];
-            const {content, id, uid, username} = bottle;
-            const chain = [];
-            chain.push({ 
-            'text': `一只编号为${id}的瓶子漂上了岸！破折号后是漂流瓶主人的昵称！\n发送“捞漂流瓶 ${id}”可以查看详细信息\n`, 
-            });
-            chain.push({ 
-              'id': uid, 
-              'text': content, 
-              'username': username
-            });
-            let result = ""
-            result += chain[0].text + '\n\n' + chain[1].text + `——${chain[1].username}`
             let retry = 0
             while (true) {
+              const bottle = bottles[Random.int(0, bottles.length)];
+              const {content, id, uid, username} = bottle;
+              const chain = [];
+              chain.push({ 
+              'text': `一只编号为${id}的瓶子漂上了岸！破折号后是漂流瓶主人的昵称！\n发送“捞漂流瓶 ${id}”可以查看详细信息\n`, 
+              });
+              chain.push({ 
+                'id': uid, 
+                'text': content, 
+                'username': username
+              });
+              let result = ""
+              result += chain[0].text + '\n\n' + chain[1].text + `——${chain[1].username}`
               let guildId = Random.pick(guilds).id
               try {
                 await bot.sendMessage(guildId, result)
                 break
               } catch (e) {
-                if (e?.response?.status === 500) {
-                  let logger = new Logger('re-driftbottle')
-                  logger.warn(`${id}号漂流瓶发送失败：` + e.stack)
-                  break
-                } else {
-                  try {
-                    let channels = []
-                    for await (let channel of bot.getChannelIter(guildId)) {
-                      if (channel.type === 0) channels.push(channel)
-                    }
-                    await bot.sendMessage(Random.pick(channels).id, result)
-                    break
-                  } catch (e) {
-                    retry++
-                    if (retry > config.maxRetry) {
-                      let logger = new Logger('re-driftbottle')
-                      logger.warn(`${id}号漂流瓶发送失败（已重试${config.maxRetry}次）：` + e.stack)
-                      break
-                    }
-                    continue
+                try {
+                  let channels = []
+                  for await (let channel of bot.getChannelIter(guildId)) {
+                    if (channel.type === 0) channels.push(channel)
                   }
+                  await bot.sendMessage(Random.pick(channels).id, result)
+                  break
+                } catch (e) {
+                  retry++
+                  let logger = new Logger('re-driftbottle')
+                  if (retry > config.maxRetry) {
+                    logger.warn(`${id}号漂流瓶发送失败（已重试${config.maxRetry}次）：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
+                    break
+                  }
+                  logger.warn(`${id}号漂流瓶发送失败（已重试${retry-1}/${config.maxRetry}次，将在${config.retryInterval}ms后重新抽一个瓶子重试）：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
+                  await sleep(config.retryInterval)
+                  continue
                 }
               }
             }
@@ -172,48 +175,43 @@ export function apply(ctx: Context, config: Config) {
             if (guilds === null || guilds.length === 0) continue
             let bottles;
             bottles = await ctx.database.get("bottle", {})
-      
-            const bottle = bottles[Random.int(0, bottles.length)];
-            const {content, id, uid, username} = bottle;
-            const chain = [];
-            chain.push({ 
-            'text': `一只编号为${id}的瓶子漂上了岸！破折号后是漂流瓶主人的昵称！\n发送“捞漂流瓶 ${id}”可以查看详细信息\n`, 
-            });
-            chain.push({ 
-              'id': uid, 
-              'text': content, 
-              'username': username
-            });
-            let result = ""
-            result += chain[0].text + '\n\n' + chain[1].text + `——${chain[1].username}`
             let retry = 0
             while (true) {
+              const bottle = bottles[Random.int(0, bottles.length)];
+              const {content, id, uid, username} = bottle;
+              const chain = [];
+              chain.push({ 
+              'text': `一只编号为${id}的瓶子漂上了岸！破折号后是漂流瓶主人的昵称！\n发送“捞漂流瓶 ${id}”可以查看详细信息\n`, 
+              });
+              chain.push({ 
+                'id': uid, 
+                'text': content, 
+                'username': username
+              });
+              let result = ""
+              result += chain[0].text + '\n\n' + chain[1].text + `——${chain[1].username}`
               let guildId = Random.pick(guilds.split(","))
               try {
                 await bot.sendMessage(guildId as string, result)
                 break
               } catch (e) {
-                if (e?.response?.status === 500) {
-                  let logger = new Logger('re-driftbottle')
-                  logger.warn(`${id}号漂流瓶发送失败：` + e.stack)
-                  break
-                } else {
-                  try {
-                    let channels = []
-                    for await (let channel of bot.getChannelIter(guildId as string)) {
-                      if (channel.type === 0) channels.push(channel)
-                    }
-                    await bot.sendMessage(Random.pick(channels).id, result)
-                    break
-                  } catch (e) {
-                    retry++
-                    if (retry > config.maxRetry) {
-                      let logger = new Logger('re-driftbottle')
-                      logger.warn(`${id}号漂流瓶发送失败（已重试${config.maxRetry}次）：` + e.stack)
-                      break
-                    }
-                    continue
+                try {
+                  let channels = []
+                  for await (let channel of bot.getChannelIter(guildId as string)) {
+                    if (channel.type === 0) channels.push(channel)
                   }
+                  await bot.sendMessage(Random.pick(channels).id, result)
+                  break
+                } catch (e) {
+                  retry++
+                  let logger = new Logger('re-driftbottle')
+                  if (retry > config.maxRetry) {
+                    logger.warn(`${id}号漂流瓶发送失败（已重试${config.maxRetry}次）：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
+                    break
+                  }
+                  logger.warn(`${id}号漂流瓶发送失败（已重试${retry-1}/${config.maxRetry}次，将在${config.retryInterval}ms后重新抽一个瓶子重试）：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
+                  await sleep(config.retryInterval)
+                  continue
                 }
               }
             }
@@ -269,59 +267,60 @@ export function apply(ctx: Context, config: Config) {
         bottles = await ctx.database.get("bottle", {id: bottleId})
         if (!bottles || bottles.length < 1) return "没有这个瓶子！"
       }
-
-      const bottle = bottles[Random.int(0, 
-        bottles.length)];
-      const {content, id, uid, username, time} = bottle;
-      const commentsLength = (await ctx.database.get("comment", {bid: id})).length;
-      const comments = await ctx.database
-        .select('comment')
-        .where({bid: id})
-        .limit(config.usePage ? config.commentLimit : Infinity)
-        .offset(config.usePage ? ((page ?? 1) - 1) * config.commentLimit : 0)
-        .execute()
-      const chain = [];
-      chain.push({ 
-      'text': h.text(`你捞到了一只编号为${id}的瓶子！内容前是漂流瓶主人的昵称，内容后是扔漂流瓶的日期！\n发送“捞漂流瓶 ${id} [分页]”可以查看评论区的其他分页\n发送“评论瓶子 ${id} <内容>”可以在下面评论这只瓶子\n发送“评论瓶子 [-r <评论编号>] ${id} <内容>”可以回复评论区的评论\n正文：`), 
-      });
-      chain.push({ 
-        'id': uid, 
-        'text': content, 
-        'username': username,
-        'time': time * 86400000
-      });
-      if (comments.length > 0)
-        chain.push({ 
-          'text': `----评论区，内容前为评论编号和用户昵称----`, 
-        });
-      for (const comment of comments) {
-        const { username: commentName, content: commentContent, uid: commentUid, cid: commentId } = comment;
-        chain.push({ 'id': commentId + ".", 'text': commentContent, 'username': commentName });
-      }
-      let bottleTime = new Date(chain[1].time);
-      let bottleTimeStr = `${bottleTime.getFullYear()}年${bottleTime.getMonth() + 1}月${bottleTime.getDate()}日`
-      let result = ""
-      result += chain[0].text + '\n\n' + `${chain[1].username}：\n${chain[1].text}\n${bottleTimeStr}`;
-      
-      if (comments.length > 0) {
-        result += "\n\n" + chain[2].text + "\n"
-        for (let i of chain.slice(3)) {
-          result += i.id + i.username + "：" + i.text + "\n"
-        }
-      }
-      if (config.usePage && comments.length > 0) result += (`\n第${page ?? 1}/${Math.ceil(commentsLength / config.commentLimit)}页`)
       let retry = 0
       while (true) {
+        const bottle = bottles[Random.int(0, 
+          bottles.length)];
+        const {content, id, uid, username, time} = bottle;
+        const commentsLength = (await ctx.database.get("comment", {bid: id})).length;
+        const comments = await ctx.database
+          .select('comment')
+          .where({bid: id})
+          .limit(config.usePage ? config.commentLimit : Infinity)
+          .offset(config.usePage ? ((page ?? 1) - 1) * config.commentLimit : 0)
+          .execute()
+        const chain = [];
+        chain.push({ 
+        'text': h.text(`你捞到了一只编号为${id}的瓶子！内容前是漂流瓶主人的昵称，内容后是扔漂流瓶的日期！\n发送“捞漂流瓶 ${id} [分页]”可以查看评论区的其他分页\n发送“评论瓶子 ${id} <内容>”可以在下面评论这只瓶子\n发送“评论瓶子 [-r <评论编号>] ${id} <内容>”可以回复评论区的评论\n正文：`), 
+        });
+        chain.push({ 
+          'id': uid, 
+          'text': content, 
+          'username': username,
+          'time': time * 86400000
+        });
+        if (comments.length > 0)
+          chain.push({ 
+            'text': `----评论区，内容前为评论编号和用户昵称----`, 
+          });
+        for (const comment of comments) {
+          const { username: commentName, content: commentContent, uid: commentUid, cid: commentId } = comment;
+          chain.push({ 'id': commentId + ".", 'text': commentContent, 'username': commentName });
+        }
+        let bottleTime = new Date(chain[1].time);
+        let bottleTimeStr = `${bottleTime.getFullYear()}年${bottleTime.getMonth() + 1}月${bottleTime.getDate()}日`
+        let result = ""
+        result += chain[0].text + '\n\n' + `${chain[1].username}：\n${chain[1].text}\n${bottleTimeStr}`;
+        
+        if (comments.length > 0) {
+          result += "\n\n" + chain[2].text + "\n"
+          for (let i of chain.slice(3)) {
+            result += i.id + i.username + "：" + i.text + "\n"
+          }
+        }
+        if (config.usePage && comments.length > 0) result += (`\n第${page ?? 1}/${Math.ceil(commentsLength / config.commentLimit)}页`)
         try {
           await session.bot.sendMessage(session.event.channel.id, result);
           break
         } catch (e) {
           retry++
+          let logger = new Logger('re-driftbottle')
           if (retry > config.maxRetry) {
-            let logger = new Logger("re-driftbottle");
-            logger.warn(`${id}号漂流瓶发送失败（已重试${config.maxRetry}次）：` + e.stack)
-            return "漂流瓶发送失败，请查看日志！"
+            logger.warn(`${id}号漂流瓶发送失败（已重试${config.maxRetry}次）：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
+            break
           }
+          logger.warn(`${id}号漂流瓶发送失败（已重试${retry-1}/${config.maxRetry}次，将在${config.retryInterval}ms后${!bottleId ? "重新抽一个瓶子" : ""}重试）：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
+          await sleep(config.retryInterval)
           continue
         }
       }
