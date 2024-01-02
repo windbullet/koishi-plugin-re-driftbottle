@@ -236,7 +236,7 @@ export function apply(ctx: Context, config: Config) {
       let cnid = session.event?.channel?.id
       let content = quote?.content ?? message;
 
-      message = config.allowPic ? message : message.replace(/<.*?>/g, '')
+      content = config.allowPic ? content : content.replace(/<.*?>/g, '')
 
       if (content.length > 500)
         return '内容过长！'
