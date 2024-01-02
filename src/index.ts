@@ -317,7 +317,7 @@ export function apply(ctx: Context, config: Config) {
           let logger = new Logger('re-driftbottle')
           if (retry > config.maxRetry) {
             logger.warn(`${id}号漂流瓶发送失败（已重试${config.maxRetry}次）：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
-            break
+            return "漂流瓶发送失败，请查看日志！"
           }
           logger.warn(`${id}号漂流瓶发送失败（已重试${retry-1}/${config.maxRetry}次，将在${config.retryInterval}ms后${!bottleId ? "重新抽一个瓶子" : ""}重试）：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
           await sleep(config.retryInterval)
