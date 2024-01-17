@@ -2,7 +2,7 @@
 // Copyright haku530 2023
 
 import { Context, Schema, Time, Random, h, $, sleep, Session, Logger, Dict } from 'koishi'
-import { userInfo } from 'os'
+import {} from "@koishijs/plugin-notifier"
 
 
 export const name = 're-driftbottle'
@@ -112,16 +112,27 @@ export const Config: Schema<Config> = Schema.intersect([
       })
     ])
   ])
-  
 ])
 
+export const inject = ["database", "notifier"]
+
 export function apply(ctx: Context, config: Config) {
+  const notifier = ctx.notifier.create()
   extendTables(ctx)
 
   if (config.randomSend) {
+    async function countdown(time:number) {
+      for (let i = time; i >= 0; i--) {
+        notifier.update(`下一个随机漂流瓶将在 ${i} 秒后发送`)
+        await ctx.sleep(1000)
+      }
+    }
+
     ctx.on("ready", async () => {
       while (true) {    
-        await new Promise(res => ctx.setTimeout(res, Random.int(config.minInterval * 1000, config.maxInterval * 1000 + 1)))
+        let wait = Random.int(config.minInterval, config.maxInterval + 1)
+        countdown(wait)
+        await ctx.sleep(wait * 1000)
         for (let bot of ctx.bots) {
           let guilds = config.guildId[bot.platform]
           if (guilds === undefined) {
@@ -524,9 +535,4 @@ async function extendTables(ctx) {
     time: 'unsigned',
   }, {primary: "id", autoInc: true});
   
-}
-
-async function sendBottle(ctx: Context, config: Config) {
-    
-    
 }
