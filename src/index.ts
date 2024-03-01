@@ -2,6 +2,7 @@
 // Copyright haku530 2023
 
 import { Context, Schema, Time, Random, h, $, sleep, Session, Logger, Dict } from 'koishi'
+import {} from "@koishijs/plugin-help"
 import {} from "@koishijs/plugin-notifier"
 
 
@@ -36,6 +37,7 @@ export interface Config {
   allowPic: boolean;
   usePage: boolean;
   allowDropOthers: boolean;
+  preview: boolean;
   maxRetry: number;
   retryInterval: number;
   debugMode: boolean;
@@ -65,6 +67,9 @@ export const Config: Schema<Config> = Schema.intersect([
     allowDropOthers: Schema.boolean()
       .description('是否允许普通用户扔其他人的消息')
       .default(false),
+    preview: Schema.boolean()
+      .description('扔漂流瓶时是否返回漂流瓶预览（顺便检测能不能发出去）')
+      .default(true),
     maxRetry: Schema.number()
       .description('漂流瓶发送失败时的最大重试次数')
       .default(5),
@@ -177,7 +182,7 @@ export function apply(ctx: Context, config: Config) {
                     break
                   }
                   logger.warn(`${id}号漂流瓶发送失败（已重试${retry-1}/${config.maxRetry}次，将在${config.retryInterval}ms后重新抽一个瓶子重试）：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
-                  await sleep(config.retryInterval)
+                  await ctx.sleep(config.retryInterval)
                   continue
                 }
               }
@@ -221,7 +226,7 @@ export function apply(ctx: Context, config: Config) {
                     break
                   }
                   logger.warn(`${id}号漂流瓶发送失败（已重试${retry-1}/${config.maxRetry}次，将在${config.retryInterval}ms后重新抽一个瓶子重试）：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
-                  await sleep(config.retryInterval)
+                  await ctx.sleep(config.retryInterval)
                   continue
                 }
               }
@@ -254,7 +259,7 @@ export function apply(ctx: Context, config: Config) {
       if (content.length < 1)
         return '内容过短！'
 
-      await ctx.database.create('bottle', {
+      let preview = await ctx.database.create('bottle', {
         uid: uid, 
         gid: gid, 
         cnid: cnid,
@@ -262,8 +267,39 @@ export function apply(ctx: Context, config: Config) {
         content: "“" + content + "”", 
         time: Time.getDateNumber()
       });
+      
+      if (config.preview) {
+        let retry = 0
+        while (true) {
+          try {
+            let bottleTime = new Date(preview.time * 86400000);
+            let bottleTimeStr = `${bottleTime.getFullYear()}年${bottleTime.getMonth() + 1}月${bottleTime.getDate()}日`
+            await session.bot.sendMessage(session.event.channel.id, `你的漂流瓶扔出去了！\n\n漂流瓶预览：\n${preview.username}：\n${preview.content}\n${bottleTimeStr}`)
+            break
+          } catch (e) {
+            retry++
+            let logger = new Logger('re-driftbottle')
+            if (retry > config.maxRetry) {
+              logger.warn(`${ preview.id }号漂流瓶发送失败（已重试${ config.maxRetry }次）：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
+              await session.send("这个漂流瓶无法发送，请查看日志！\n30秒内发送“保留”以保留漂流瓶，否则将被删除")
+              let reply = await session.prompt(30000)
+              if (reply === "保留") {
+                return "漂流瓶已保留！"
+              } else {
+                await ctx.database.remove('bottle', { id: preview.id })
+                logger.info(`${ preview.id }号漂流瓶已被删除`)
+                return "漂流瓶已删除！"
+              }
+            }
+            logger.warn(`${ preview.id }号漂流瓶发送失败（已重试${retry-1}/${config.maxRetry}次，将在${config.retryInterval}ms后重试：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
+            await ctx.sleep(config.retryInterval)
+            continue  
+          }
+        }
+      } else {
+        return '你的漂流瓶扔出去了！';
+      }
 
-      return '你的漂流瓶扔出去了！';
     })
 
   ctx.command("漂流瓶.捞漂流瓶 [bottleId:posint] [page:posint]")
@@ -331,7 +367,7 @@ export function apply(ctx: Context, config: Config) {
             return "漂流瓶发送失败，请查看日志！"
           }
           logger.warn(`${id}号漂流瓶发送失败（已重试${retry-1}/${config.maxRetry}次，将在${config.retryInterval}ms后${!bottleId ? "重新抽一个瓶子" : ""}重试）：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
-          await sleep(config.retryInterval)
+          await ctx.sleep(config.retryInterval)
           continue
         }
       }
@@ -501,7 +537,7 @@ export function apply(ctx: Context, config: Config) {
       .example('删除过期瓶子 <天数>')
       .action(async ({ session }, days) => {
         if (!days) return '请输入天数！';
-        if (!config.manager.includes(session.event.user.id)) return '你没有权限删除瓶子！';
+        if (!config.manager.includes(session.event.user.id)) return '你没有权限删除过期瓶子！';
         const deleteDays = days;
         const bottles = await ctx.database.get('bottle', { time: { $lt: Time.getDateNumber() - deleteDays } });
         if (!bottles || bottles.length < 1) return '没有过期的瓶子！';
@@ -510,6 +546,136 @@ export function apply(ctx: Context, config: Config) {
         await ctx.database.remove('comment', { bid: { $in: bottles.map((bottle) => bottle.id) } });
         return '过期瓶子已经被删除！';
       });
+
+    ctx.command('漂流瓶.检查无效瓶子 [start:posint] [end:posint]', '列出指定编号闭区间内的无法发送的瓶子，不输入区间则列出所有无法发送的漂流瓶，可一键删除', {hidden: true})
+      .alias('删除无效瓶子')
+      .usage("警告：这个功能会将选中的所有漂流瓶发送出来，请自行承担风险")
+      .example('删除无效瓶子 1 10')
+      .action(async ({ session }, start, end) => {
+        if (!config.manager.includes(session.event.user.id)) {
+          return '你没有权限删除无效瓶子！';
+        } else if (start && end === undefined) {
+          return '请输入结束编号！';
+        } else if (start > end) {
+          return '起始编号不能大于结束编号！';
+        }
+
+        await session.send("警告：这个功能会将选中的所有漂流瓶发送出来，如果你确定要这么做，请在30秒内发送“是”")
+        let confirm = await session.prompt(30000);
+        if (confirm !== '是') return "已取消操作"
+        await session.send("正在检测...")
+        let brokenBottle = []
+        let bottles = await ctx.database.get('bottle', { id: start ? { $gte: start, $lte: end } : {} });
+        for (let bottle of bottles) {
+          let retry = 0
+          const {content, id, uid, username, time} = bottle;
+          const chain = [];
+
+          chain.push({ 
+          'text': h.text(`你捞到了一只编号为${id}的瓶子！内容前是漂流瓶主人的昵称，内容后是扔漂流瓶的日期！\n发送“捞漂流瓶 ${id} [分页]”可以查看评论区的其他分页\n发送“评论瓶子 ${id} <内容>”可以在下面评论这只瓶子\n发送“评论瓶子 [-r <评论编号>] ${id} <内容>”可以回复评论区的评论\n正文：`), 
+          });
+          chain.push({ 
+            'id': uid, 
+            'text': content, 
+            'username': username,
+            'time': time * 86400000
+          });
+
+          let bottleTime = new Date(chain[1].time);
+          let bottleTimeStr = `${bottleTime.getFullYear()}年${bottleTime.getMonth() + 1}月${bottleTime.getDate()}日`
+          let result = ""
+          result += chain[0].text + '\n\n' + `${chain[1].username}：\n${chain[1].text}\n${bottleTimeStr}`;
+
+          while (true) {            
+            try {
+              await session.bot.sendMessage(session.event.channel.id, result);
+              break
+            } catch (e) {
+              retry++
+              if (retry > config.maxRetry) {
+                brokenBottle.push(id)
+                await session.send(`${ id }号漂流瓶无法发送`)
+                break
+              }
+              await ctx.sleep(config.retryInterval)
+              continue
+            }
+          }
+        }
+
+        if (brokenBottle.length === 0) return "未发现无法发送的漂流瓶！"
+        let result = ""
+        result += brokenBottle.join(", ")
+        result += "号漂流瓶无法发送\n30秒内发送“删除”即可删除以上漂流瓶"
+        await session.send(result)
+        let reply = await session.prompt(30000)
+        if (reply === "删除") {
+          await ctx.database.remove("bottle", { id: { $in: brokenBottle } })
+          return "已删除以上漂流瓶"
+        } else {
+          return "已取消删除"
+        }
+      })
+
+    ctx.command("漂流瓶.删除无效评论 [start:posint] [end:posint]", "列出指定编号闭区间内的瓶子下无法发送的评论，不输入区间则列出所有，可一键删除", {hidden: true})
+      .alias("删除无效评论")
+      .usage("警告：这个功能会将选中的所有漂流瓶下的评论发送出来，请自行承担风险")
+      .example('删除无效评论 1 10')
+      .action(async ({ session }, start, end) => {
+        if (!config.manager.includes(session.event.user.id)) {
+          return '你没有权限删除无效评论！';
+        } else if (start && end === undefined) {
+          return '请输入结束编号！';
+        } else if (start > end) {
+          return '起始编号不能大于结束编号！';
+        }
+
+        await session.send("警告：这个功能会将选中的所有漂流瓶下的评论发送出来，如果你确定要这么做，请在30秒内发送“是”")
+        let confirm = await session.prompt(30000);
+        if (confirm !== '是') return "已取消操作"
+        await session.send("正在检测...")
+        let brokenComment = new Map()
+        let brokenCommentId = []
+        let bottles = await ctx.database.get('bottle', { id: start ? { $gte: start, $lte: end } : {} });
+        for (let bottle of bottles) {
+          let comments = await ctx.database.get('comment', { bid: bottle.id });
+          for (const comment of comments) {
+            const { username: commentName, content: commentContent, uid: commentUid, cid: commentId, id: id } = comment;
+            let retry = 0
+            while (true) {            
+              try {
+                await session.bot.sendMessage(session.event.channel.id, commentId + "." + commentName + "：" + commentContent + "\n");
+                break
+              } catch (e) {
+                retry++
+                if (retry > config.maxRetry) {
+                  brokenComment.set(bottle.id, brokenComment.has(bottle.id) ? [...brokenComment.get(bottle.id), commentId] : [commentId])
+                  brokenCommentId.push(id)
+                  await session.send(`${ bottle.id }号漂流瓶中的${ commentId }号评论无法发送`)
+                  break
+                }
+                await ctx.sleep(config.retryInterval)
+                continue
+              }
+            }
+          }          
+        }
+
+        if (brokenComment.size === 0) return "未发现无法发送的评论！"
+        let result = ""
+        for (let [key, value] of brokenComment) {
+          result += `${ key }号漂流瓶中的${ value.join(", ") }号评论无法发送\n`
+        }
+        result += "30秒内发送“删除”即可删除以上评论"
+        await session.send(result)
+        let reply = await session.prompt(30000)
+        if (reply === "删除") {
+          await ctx.database.remove("comment", { id: { $in: brokenCommentId } })
+          return "已删除以上评论"
+        } else {
+          return "已取消删除"
+        }
+      })
 
 }    
 async function extendTables(ctx) {
