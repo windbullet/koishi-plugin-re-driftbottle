@@ -1,7 +1,7 @@
 // This file is modified from https://www.npmjs.com/package/koishi-plugin-driftbottle, under the MIT license
 // Copyright haku530 2023
 
-import { Context, Schema, Time, Random, h, $, sleep, Session, Logger, Dict } from 'koishi'
+import { Context, Schema, Time, Random, h, Logger, Dict } from 'koishi'
 import {} from "@koishijs/plugin-help"
 import {} from "@koishijs/plugin-notifier"
 
@@ -129,7 +129,11 @@ export function apply(ctx: Context, config: Config) {
     async function countdown(time:number) {
       for (let i = time; i >= 0; i--) {
         notifier.update(`下一个随机漂流瓶将在 ${i} 秒后发送`)
-        await ctx.sleep(1000)
+        try {
+          await ctx.sleep(1000)
+        } catch {
+          return
+        }
       }
     }
 
@@ -137,7 +141,11 @@ export function apply(ctx: Context, config: Config) {
       while (true) {    
         let wait = Random.int(config.minInterval, config.maxInterval + 1)
         countdown(wait)
-        await ctx.sleep(wait * 1000)
+        try {
+          await ctx.sleep(wait * 1000)
+        } catch {
+          return
+        }
         for (let bot of ctx.bots) {
           let guilds = config.guildId[bot.platform]
           if (guilds === undefined) {
@@ -182,7 +190,11 @@ export function apply(ctx: Context, config: Config) {
                     break
                   }
                   logger.warn(`${id}号漂流瓶发送失败（已重试${retry-1}/${config.maxRetry}次，将在${config.retryInterval}ms后重新抽一个瓶子重试）：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
-                  await ctx.sleep(config.retryInterval)
+                  try {
+                    await ctx.sleep(config.retryInterval)
+                  } catch {
+                    return
+                  }
                   continue
                 }
               }
@@ -226,7 +238,11 @@ export function apply(ctx: Context, config: Config) {
                     break
                   }
                   logger.warn(`${id}号漂流瓶发送失败（已重试${retry-1}/${config.maxRetry}次，将在${config.retryInterval}ms后重新抽一个瓶子重试）：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
-                  await ctx.sleep(config.retryInterval)
+                  try {
+                    await ctx.sleep(config.retryInterval)
+                  } catch {
+                    return
+                  }
                   continue
                 }
               }
@@ -292,7 +308,11 @@ export function apply(ctx: Context, config: Config) {
               }
             }
             logger.warn(`${ preview.id }号漂流瓶发送失败（已重试${retry-1}/${config.maxRetry}次，将在${config.retryInterval}ms后重试：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
-            await ctx.sleep(config.retryInterval)
+            try {
+              await ctx.sleep(config.retryInterval)
+            } catch {
+              return
+            }
             continue  
           }
         }
@@ -367,7 +387,11 @@ export function apply(ctx: Context, config: Config) {
             return "漂流瓶发送失败，请查看日志！"
           }
           logger.warn(`${id}号漂流瓶发送失败（已重试${retry-1}/${config.maxRetry}次，将在${config.retryInterval}ms后${!bottleId ? "重新抽一个瓶子" : ""}重试）：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
-          await ctx.sleep(config.retryInterval)
+          try {
+            await ctx.sleep(config.retryInterval)
+          } catch {
+            return
+          }
           continue
         }
       }
@@ -597,7 +621,11 @@ export function apply(ctx: Context, config: Config) {
                 await session.send(`${ id }号漂流瓶无法发送`)
                 break
               }
-              await ctx.sleep(config.retryInterval)
+              try {
+                await ctx.sleep(config.retryInterval)
+              } catch {
+                return
+              }
               continue
             }
           }
@@ -654,7 +682,11 @@ export function apply(ctx: Context, config: Config) {
                   await session.send(`${ bottle.id }号漂流瓶中的${ commentId }号评论无法发送`)
                   break
                 }
-                await ctx.sleep(config.retryInterval)
+                try {
+                  await ctx.sleep(config.retryInterval)
+                } catch {
+                  return
+                }
                 continue
               }
             }
