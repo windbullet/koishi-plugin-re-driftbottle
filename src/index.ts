@@ -571,7 +571,7 @@ export function apply(ctx: Context, config: Config) {
         return '过期瓶子已经被删除！';
       });
 
-    ctx.command('漂流瓶.检查无效瓶子 [start:posint] [end:posint]', '列出指定编号闭区间内的无法发送的瓶子，不输入区间则列出所有无法发送的漂流瓶，可一键删除', {hidden: true})
+    ctx.command('漂流瓶.删除无效瓶子 [start:posint] [end:posint]', '列出指定编号闭区间内的无法发送的瓶子，不输入区间则列出所有无法发送的漂流瓶，可一键删除', {hidden: true})
       .alias('删除无效瓶子')
       .usage("警告：这个功能会将选中的所有漂流瓶发送出来，请自行承担风险")
       .example('删除无效瓶子 1 10')
