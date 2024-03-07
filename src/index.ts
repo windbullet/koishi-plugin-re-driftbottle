@@ -296,18 +296,13 @@ export function apply(ctx: Context, config: Config) {
             retry++
             let logger = new Logger('re-driftbottle')
             if (retry > config.maxRetry) {
-              logger.warn(`${ preview.id }号漂流瓶发送失败（已重试${ config.maxRetry }次）：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
-              await session.send("这个漂流瓶无法发送，请查看日志！\n30秒内发送“保留”以保留漂流瓶，否则将被删除")
-              let reply = await session.prompt(30000)
-              if (reply === "保留") {
-                return "漂流瓶已保留！"
-              } else {
-                await ctx.database.remove('bottle', { id: preview.id })
-                logger.info(`${ preview.id }号漂流瓶已被删除`)
-                return "漂流瓶已删除！"
-              }
+              logger.warn(`${ preview.id }号漂流瓶预览发送失败（已重试${ config.maxRetry }次）：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
+              await session.send("这个漂流瓶无法发送，请查看日志！\n你可以尝试以下方法：\n保存图片再扔漂流瓶（如果你要扔的是图片的话）\n缩短漂流瓶长度\n稍后重试\n联系开发者")
+              await ctx.database.remove('bottle', { id: preview.id })
+              logger.info(`${ preview.id }号漂流瓶已被删除`)
+              break
             }
-            logger.warn(`${ preview.id }号漂流瓶发送失败（已重试${retry-1}/${config.maxRetry}次，将在${config.retryInterval}ms后重试：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
+            logger.warn(`${ preview.id }号漂流瓶预览发送失败（已重试${retry-1}/${config.maxRetry}次，将在${config.retryInterval}ms后重试：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
             try {
               await ctx.sleep(config.retryInterval)
             } catch {
@@ -499,7 +494,32 @@ export function apply(ctx: Context, config: Config) {
           content: ct, 
           time: Time.getDateNumber() 
         });
-        return '你的评论已经扔出去了！';
+
+        if (config.preview) {
+          let logger = new Logger("re-driftbottle")
+          let retry = 0
+          while (true) {
+            try {
+              await session.bot.sendMessage(session.event.channel.id, '你的评论已经扔出去了！\n评论预览：\n' + cid + "." + session.username + "：" + ct + "\n");
+              break
+            } catch (e) {
+              retry++
+              if (retry > config.maxRetry) {
+                await session.send("这个评论无法发送，请查看日志！\n你可以尝试以下方法：\n保存图片再扔评论（如果你要扔的是图片的话）\n缩短评论长度\n稍后重试\n联系开发者")
+                logger.warn(`${id}号漂流瓶中的${cid}号评论预览发送失败（已重试${config.maxRetry}次）：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
+                await ctx.database.remove('comment', { bid: id, cid: cid });
+                logger.info(`已删除${id}号漂流瓶中的${cid}号评论`)
+                break
+              }
+              logger.warn(`${id}号漂流瓶中的${cid}号评论预览发送失败（已重试${retry-1}/${config.maxRetry}次，将在${config.retryInterval}ms后重试）：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
+              try {
+                await ctx.sleep(config.retryInterval)
+              } catch {
+                return
+              }
+            }
+          }
+        }
       })
 
     ctx.command('漂流瓶.删除瓶子 <id:posint>', '', { checkArgCount: true})
@@ -639,6 +659,8 @@ export function apply(ctx: Context, config: Config) {
         let reply = await session.prompt(30000)
         if (reply === "删除") {
           await ctx.database.remove("bottle", { id: { $in: brokenBottle } })
+          let logger = new Logger("re-driftbottle")
+          logger.info(`已删除${result += brokenBottle.join(", ")}号漂流瓶`)
           return "已删除以上漂流瓶"
         } else {
           return "已取消删除"
