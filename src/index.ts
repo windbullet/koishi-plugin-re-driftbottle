@@ -297,7 +297,7 @@ export function apply(ctx: Context, config: Config) {
             let logger = new Logger('re-driftbottle')
             if (retry > config.maxRetry) {
               logger.warn(`${ preview.id }号漂流瓶预览发送失败（已重试${ config.maxRetry }次）：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
-              await session.send("这个漂流瓶无法发送，请查看日志！\n你可以尝试以下方法：\n保存图片再扔漂流瓶（如果你要扔的是图片的话）\n缩短漂流瓶长度\n稍后重试\n联系开发者")
+              await session.send("这个漂流瓶无法发送，请查看日志！\n你可以尝试以下方法：\n保存图片后使用指令“扔漂流瓶 [图片]”（如果你要扔的是图片的话）\n缩短漂流瓶长度\n稍后重试\n联系开发者")
               await ctx.database.remove('bottle', { id: preview.id })
               logger.info(`${ preview.id }号漂流瓶已被删除`)
               break
@@ -505,7 +505,7 @@ export function apply(ctx: Context, config: Config) {
             } catch (e) {
               retry++
               if (retry > config.maxRetry) {
-                await session.send("这个评论无法发送，请查看日志！\n你可以尝试以下方法：\n保存图片再扔评论（如果你要扔的是图片的话）\n缩短评论长度\n稍后重试\n联系开发者")
+                await session.send("这个评论无法发送，请查看日志！\n你可以尝试以下方法：\n保存图片后使用指令“评论瓶子 [瓶子编号] [图片]”（如果你要扔的是图片的话）\n缩短评论长度\n稍后重试\n联系开发者")
                 logger.warn(`${id}号漂流瓶中的${cid}号评论预览发送失败（已重试${config.maxRetry}次）：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
                 await ctx.database.remove('comment', { bid: id, cid: cid });
                 logger.info(`已删除${id}号漂流瓶中的${cid}号评论`)
