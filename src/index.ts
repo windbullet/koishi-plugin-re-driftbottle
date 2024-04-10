@@ -37,6 +37,7 @@ export interface Config {
   allowPic: boolean;
   usePage: boolean;
   allowDropOthers: boolean;
+  selfDrop: boolean;
   preview: boolean;
   maxRetry: number;
   retryInterval: number;
@@ -66,6 +67,9 @@ export const Config: Schema<Config> = Schema.intersect([
       .default(true),
     allowDropOthers: Schema.boolean()
       .description('是否允许普通用户扔其他人的消息')
+      .default(false),
+    selfDrop: Schema.boolean()
+      .description('扔别人的消息时是否算作自己扔的')
       .default(false),
     preview: Schema.boolean()
       .description('扔漂流瓶时是否返回漂流瓶预览（顺便检测能不能发出去）')
@@ -256,14 +260,19 @@ export function apply(ctx: Context, config: Config) {
   ctx.command("漂流瓶", "漂流瓶")
   
   ctx.command("漂流瓶.扔漂流瓶 [message:text]")
-    .usage('扔漂流瓶 <内容>\n也可以引用回复一条消息（去掉@）来直接扔漂流瓶（该方法只能管理员使用或扔自己的消息）')
+    .usage('扔漂流瓶 <内容>\n也可以引用回复一条消息（去掉@）来直接扔漂流瓶')
     .alias("扔漂流瓶")
     .action(async ({ session }, message) => {
       let quote = session.event.message.quote
 
       if (!message && !quote) return '请输入内容或引用回复一条消息'
       if ((quote && !config.manager.includes(session.event.user.id) && quote.user.id !== session.event.user.id) && !config.allowDropOthers) return '你没有权限扔别人的漂流瓶！'
-      let uid = quote?.user.id ?? session.event.user.id
+      let uid
+      if (config.selfDrop) {
+        uid = session.event.user.id
+      } else {
+        uid = quote?.user.id ?? session.event.user.id
+      }
       let gid = session.event?.guild?.id
       let cnid = session.event?.channel?.id
       let content = quote?.content ?? message;
