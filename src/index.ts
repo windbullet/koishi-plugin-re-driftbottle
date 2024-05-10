@@ -169,7 +169,7 @@ export function apply(ctx: Context, config: Config) {
               const {content, id, uid, username} = bottle;
               const chain = [];
               chain.push({ 
-              'text': `一只编号为${id}的瓶子漂上了岸！破折号后是漂流瓶主人的昵称！\n发送“捞漂流瓶 ${id}”可以查看详细信息\n`, 
+              'text': `一只来自“${username}”的${id}号瓶子漂上了岸！\n发送“捞漂流瓶 ${id}”可以查看详细信息\n内容：`, 
               });
               chain.push({ 
                 'id': uid, 
@@ -177,10 +177,22 @@ export function apply(ctx: Context, config: Config) {
                 'username': username
               });
               let result = ""
-              result += chain[0].text + '\n\n' + chain[1].text + `——${chain[1].username}`
+              let result2 = ""
+              if (chain[1].text.includes("<audio") || chain[1].text.includes("<video")) {
+                result += chain[0].text
+                result2 += chain[1].text
+              } else {
+                result += chain[0].text + chain[1].text
+              }
+
               let guildId = Random.pick(guilds).id
               try {
-                await bot.sendMessage(guildId, result)
+                if (chain[1].text.includes("<audio") || chain[1].text.includes("<video")) {
+                  await bot.sendMessage(guildId, result)
+                  await bot.sendMessage(guildId, result2)
+                } else {
+                  await bot.sendMessage(guildId, result)
+                }
                 break
               } catch (e) {
                 try {
@@ -188,7 +200,14 @@ export function apply(ctx: Context, config: Config) {
                   for await (let channel of bot.getChannelIter(guildId)) {
                     if (channel.type === 0) channels.push(channel)
                   }
-                  await bot.sendMessage(Random.pick(channels).id, result)
+                  let cid = Random.pick(channels).id
+                  if (chain[1].text.includes("<audio") || chain[1].text.includes("<video")) {
+                    await bot.sendMessage(cid, result)
+                    await bot.sendMessage(cid, result2)
+                  } else {
+                    await bot.sendMessage(cid, result)
+                  }
+
                   break
                 } catch (e) {
                   retry++
@@ -217,7 +236,7 @@ export function apply(ctx: Context, config: Config) {
               const {content, id, uid, username} = bottle;
               const chain = [];
               chain.push({ 
-              'text': `一只编号为${id}的瓶子漂上了岸！破折号后是漂流瓶主人的昵称！\n发送“捞漂流瓶 ${id}”可以查看详细信息\n`, 
+                'text': `一只来自“${username}”的${id}号瓶子漂上了岸！\n发送“捞漂流瓶 ${id}”可以查看详细信息\n内容：`, 
               });
               chain.push({ 
                 'id': uid, 
@@ -225,10 +244,21 @@ export function apply(ctx: Context, config: Config) {
                 'username': username
               });
               let result = ""
-              result += chain[0].text + '\n\n' + chain[1].text + `——${chain[1].username}`
+              let result2 = ""
+              if (chain[1].text.includes("<audio") || chain[1].text.includes("<video")) {
+                result += chain[0].text
+                result2 += chain[1].text
+              } else {
+                result += chain[0].text + chain[1].text
+              }
               let guildId = Random.pick(guilds.split(","))
               try {
-                await bot.sendMessage(guildId as string, result)
+                if (chain[1].text.includes("<audio") || chain[1].text.includes("<video")) {
+                  await bot.sendMessage(guildId as string, result)
+                  await bot.sendMessage(guildId as string, result2)
+                } else {
+                  await bot.sendMessage(guildId as string, result)
+                }
                 break
               } catch (e) {
                 try {
@@ -236,7 +266,13 @@ export function apply(ctx: Context, config: Config) {
                   for await (let channel of bot.getChannelIter(guildId as string)) {
                     if (channel.type === 0) channels.push(channel)
                   }
-                  await bot.sendMessage(Random.pick(channels).id, result)
+                  let cid = Random.pick(channels).id
+                  if (chain[1].text.includes("<audio") || chain[1].text.includes("<video")) {
+                    await bot.sendMessage(cid, result)
+                    await bot.sendMessage(cid, result2)
+                  } else {
+                    await bot.sendMessage(cid, result)
+                  }
                   break
                 } catch (e) {
                   retry++
