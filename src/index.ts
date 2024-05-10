@@ -42,6 +42,7 @@ export interface Config {
   maxRetry: number;
   retryInterval: number;
   debugMode: boolean;
+  alwaysShowInst: boolean;
   commentLimit?: number;
   bottleLimit?: number;
   randomSend: boolean;
@@ -82,7 +83,10 @@ export const Config: Schema<Config> = Schema.intersect([
       .default(500),
     debugMode: Schema.boolean()
       .description('漂流瓶发送失败时，在日志显示调用栈')
-      .default(false)
+      .default(false),
+    alwaysShowInst: Schema.boolean()
+      .description('是否在捞漂流瓶时总是显示使用说明')
+      .default(true)
   }),
   Schema.intersect([
     Schema.object({
@@ -289,7 +293,7 @@ export function apply(ctx: Context, config: Config) {
         gid: gid, 
         cnid: cnid,
         username: session.username,
-        content: "“" + content + "”", 
+        content: content, 
         time: Time.getDateNumber()
       });
       
@@ -299,7 +303,13 @@ export function apply(ctx: Context, config: Config) {
           try {
             let bottleTime = new Date(preview.time * 86400000);
             let bottleTimeStr = `${bottleTime.getFullYear()}年${bottleTime.getMonth() + 1}月${bottleTime.getDate()}日`
-            await session.bot.sendMessage(session.event.channel.id, `你的漂流瓶扔出去了！\n\n漂流瓶预览：\n${preview.username}：\n${preview.content}\n${bottleTimeStr}`)
+            if (preview.content.includes("<audio") || preview.content.includes("<video")) {
+              await session.bot.sendMessage(session.event.channel.id, `你的漂流瓶扔出去了！\n\n漂流瓶预览：`)
+              await session.bot.sendMessage(session.event.channel.id, preview.content)
+            } else {
+              await session.bot.sendMessage(session.event.channel.id, `你的漂流瓶扔出去了！\n\n漂流瓶预览：\n${preview.content}`)
+            }
+            
             break
           } catch (e) {
             retry++
@@ -340,8 +350,7 @@ export function apply(ctx: Context, config: Config) {
       }
       let retry = 0
       while (true) {
-        const bottle = bottles[Random.int(0, 
-          bottles.length)];
+        const bottle = bottles[Random.int(0, bottles.length)];
         const {content, id, uid, username, time} = bottle;
         const commentsLength = (await ctx.database.get("comment", {bid: id})).length;
         const comments = await ctx.database
@@ -351,14 +360,15 @@ export function apply(ctx: Context, config: Config) {
           .offset(config.usePage ? ((page ?? 1) - 1) * config.commentLimit : 0)
           .execute()
         const chain = [];
+        let bottleTime = new Date(time * 86400000);
+        let bottleTimeStr = `${bottleTime.getFullYear()}年${bottleTime.getMonth() + 1}月${bottleTime.getDate()}日`
         chain.push({ 
-        'text': h.text(`你捞到了一只编号为${id}的瓶子！内容前是漂流瓶主人的昵称，内容后是扔漂流瓶的日期！\n发送“捞漂流瓶 ${id} [分页]”可以查看评论区的其他分页\n发送“评论瓶子 ${id} <内容>”可以在下面评论这只瓶子\n发送“评论瓶子 [-r <评论编号>] ${id} <内容>”可以回复评论区的评论\n正文：`), 
+        'text': h.text(`你捞到了来自“${username}”的漂流瓶，编号为${id}！\n日期：${bottleTimeStr}\n${config.alwaysShowInst ? `发送“捞漂流瓶 ${id} [分页]”可以查看评论区的其他分页\n发送“评论瓶子 ${id} <内容>”可以在下面评论这只瓶子\n发送“评论瓶子 [-r <评论编号>] ${id} <内容>”可以回复评论区的评论\n`: ""}`), 
         });
         chain.push({ 
           'id': uid, 
           'text': content, 
           'username': username,
-          'time': time * 86400000
         });
         if (comments.length > 0)
           chain.push({ 
@@ -368,20 +378,36 @@ export function apply(ctx: Context, config: Config) {
           const { username: commentName, content: commentContent, uid: commentUid, cid: commentId } = comment;
           chain.push({ 'id': commentId + ".", 'text': commentContent, 'username': commentName });
         }
-        let bottleTime = new Date(chain[1].time);
-        let bottleTimeStr = `${bottleTime.getFullYear()}年${bottleTime.getMonth() + 1}月${bottleTime.getDate()}日`
         let result = ""
-        result += chain[0].text + '\n\n' + `${chain[1].username}：\n${chain[1].text}\n${bottleTimeStr}`;
+        let result2 = ""
+        if (chain[1].text.includes("<audio") || chain[1].text.includes("<video")) {
+          result += chain[0].text + '\n' + `内容：`;
+          result2 += chain[1].text;
+        } else {
+          result += chain[0].text + '\n' + `内容：\n${chain[1].text}`;
+        }
+
         
         if (comments.length > 0) {
-          result += "\n\n" + chain[2].text + "\n"
-          for (let i of chain.slice(3)) {
-            result += i.id + i.username + "：" + i.text + "\n"
+          if (chain[1].text.includes("<audio") || chain[1].text.includes("<video")) {
+            result2 += "\n\n" + chain[2].text + "\n"
+            for (let i of chain.slice(3)) {
+              result2 += i.id + i.username + "：" + i.text + "\n"
+            }
+          } else {
+            result += "\n\n" + chain[2].text + "\n"
+            for (let i of chain.slice(3)) {
+              result += i.id + i.username + "：" + i.text + "\n"
+            }
           }
+          
         }
         if (config.usePage && comments.length > 0) result += (`\n第${page ?? 1}/${Math.ceil(commentsLength / config.commentLimit)}页`)
         try {
           await session.bot.sendMessage(session.event.channel.id, result);
+          if (chain[1].text.includes("<audio") || chain[1].text.includes("<video")) {
+            await session.bot.sendMessage(session.event.channel.id, result2);
+          }
           break
         } catch (e) {
           retry++
@@ -578,7 +604,7 @@ export function apply(ctx: Context, config: Config) {
         } else {
           for (const bottle of bottles) {
             const { content, id } = bottle;
-            chain.push(`瓶子编号${id}：${content}`);
+            chain.push(`瓶子编号${id}：${content.includes("<audio") ? "[语音]" : content.includes("<video") ? "[视频]" : content.includes("<image") ? "[图片]" : content}`);
           }
           if (config.usePage) chain.push(`\n第${page ?? 1}/${Math.ceil(bottlesLength / config.bottleLimit)}页`);
         }
