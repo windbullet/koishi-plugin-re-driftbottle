@@ -340,10 +340,10 @@ export function apply(ctx: Context, config: Config) {
             let bottleTime = new Date(preview.time * 86400000);
             let bottleTimeStr = `${bottleTime.getFullYear()}年${bottleTime.getMonth() + 1}月${bottleTime.getDate()}日`
             if (preview.content.includes("<audio") || preview.content.includes("<video")) {
-              await session.bot.sendMessage(session.event.channel.id, `你的漂流瓶扔出去了！\n\n漂流瓶预览：`)
+              await session.bot.sendMessage(session.event.channel.id, `你的${preview.id}号漂流瓶扔出去了！\n\n漂流瓶预览：`)
               await session.bot.sendMessage(session.event.channel.id, preview.content)
             } else {
-              await session.bot.sendMessage(session.event.channel.id, `你的漂流瓶扔出去了！\n\n漂流瓶预览：\n${preview.content}`)
+              await session.bot.sendMessage(session.event.channel.id, `你的${preview.id}号漂流瓶扔出去了！\n\n漂流瓶预览：\n${preview.content}`)
             }
             
             break
@@ -367,7 +367,7 @@ export function apply(ctx: Context, config: Config) {
           }
         }
       } else {
-        return '你的漂流瓶扔出去了！';
+        return `你的${preview.id}号漂流瓶扔出去了！`;
       }
 
     })
