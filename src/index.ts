@@ -817,8 +817,6 @@ export function apply(ctx: Context, config: Config) {
             return element
           }
         })
-        console.log(session.elements)
-        console.log(session.content)
         await session.execute(`漂流瓶.评论瓶子 ${index} ${session.content}`)
       }
     })
