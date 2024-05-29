@@ -481,7 +481,6 @@ export function apply(ctx: Context, config: Config) {
         }
         const quote = session.event.message.quote
         if (!ct && !quote) return '请输入内容或引用回复一条消息';
-        if (quote && !config.manager.includes(session.event.user.id) && quote.user.id !== session.event.user.id) return '你没有权限扔别人的漂流瓶！';
         let uid = quote?.user.id ?? session.event.user.id;
         let gid = session.event?.guild?.id;
         let cnid = session.event?.channel?.id;
@@ -811,7 +810,7 @@ export function apply(ctx: Context, config: Config) {
         await session.send("30秒内发送“取消”以取消评论瓶子")
         if (await session.prompt(30000) === "取消") return "已取消评论瓶子"
         let index = /^你捞到了来自“(.*)”的漂流瓶，编号为(\d+)！/.exec(session.quote.content)[2]
-        await session.execute(`评论瓶子 ${index} ${session.content.replaceAll(new RegExp(`<at id=\\"${session.selfId}\\"/>`, "g"), "")}`)
+        await session.execute(`漂流瓶.评论瓶子 ${index} ${session.content.replaceAll(new RegExp(`<at id=\\"${session.selfId}\\"/>`, "g"), "")}`)
       }
     })
 
