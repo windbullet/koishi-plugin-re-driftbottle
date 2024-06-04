@@ -43,6 +43,7 @@ export interface Config {
   retryInterval: number;
   debugMode: boolean;
   alwaysShowInst: boolean;
+  maxLength: number;
   commentLimit?: number;
   bottleLimit?: number;
   randomSend: boolean;
@@ -86,7 +87,10 @@ export const Config: Schema<Config> = Schema.intersect([
       .default(false),
     alwaysShowInst: Schema.boolean()
       .description('是否在捞漂流瓶时总是显示使用说明')
-      .default(true)
+      .default(true),
+    maxLength: Schema.number()
+      .description('漂流瓶允许的最大长度（UTF-16 码元长度）')
+      .default(500),
   }),
   Schema.intersect([
     Schema.object({
@@ -319,7 +323,7 @@ export function apply(ctx: Context, config: Config) {
 
       content = config.allowPic ? content : content.replace(/<.*?>/g, '')
 
-      if (content.length > 500)
+      if (content.length > config.maxLength)
         return '内容过长！'
       if (content.length < 1)
         return '内容过短！'
@@ -486,7 +490,7 @@ export function apply(ctx: Context, config: Config) {
         let cnid = session.event?.channel?.id;
         const { uid: buid, gid: bgid, cnid: bcnid } = bottle;
         ct = config.allowPic ? ct : ct.replace(/<.*?>/g, '');
-        if (ct.length > 500) return '内容过长！';
+        if (ct.length > config.maxLength) return '内容过长！';
         if (ct.length < 1) return '内容过短！';
         ct = "“" + ct + "”"
         if (session.platform !== "qq") {
@@ -639,7 +643,7 @@ export function apply(ctx: Context, config: Config) {
         } else {
           for (const bottle of bottles) {
             const { content, id } = bottle;
-            chain.push(`瓶子编号${id}：${content.includes("<audio") ? "[语音]" : content.includes("<video") ? "[视频]" : content.includes("<image") ? "[图片]" : content}`);
+            chain.push(`瓶子编号${id}：${content.includes("<audio") ? "[语音]" : content.includes("<video") ? "[视频]" : content}`);
           }
           if (config.usePage) chain.push(`\n第${page ?? 1}/${Math.ceil(bottlesLength / config.bottleLimit)}页`);
         }
@@ -799,6 +803,43 @@ export function apply(ctx: Context, config: Config) {
         } else {
           return "已取消删除"
         }
+      })
+
+    ctx.command("漂流瓶.查看用户瓶子 <user> [page:posint]", "查看指定用户扔的瓶子")
+      .alias("查看用户瓶子")
+      .option('list', '-l 只输出瓶子编号，无分页')
+      .example("漂流瓶.查看用户瓶子 @Koishi 2")
+      .action(async ({ session, options }, user, page) => {
+        if (config.manager.includes(session.event.user.id)) {
+          const id = /\d+/.exec(user)?.[0]
+          if (id) {
+            const bottlesLength = (await ctx.database.get("bottle", {uid: id})).length
+            const bottles = await ctx.database
+              .select("bottle")
+              .where({ uid: id })
+              .limit(!config.usePage || options.list ? Infinity : config.bottleLimit)
+              .offset(!config.usePage || options.list ? 0 : ((page ?? 1) - 1) * config.bottleLimit)
+              .execute()
+            if (!bottles || bottles.length < 1) return '该用户还没有扔过瓶子！';
+            const chain = [];
+            chain.push(`该用户扔出去的瓶子有：`);
+            if (options.list) {
+              chain.push(bottles.map(bottle => bottle.id).join(' | '));
+            } else {
+              for (const bottle of bottles) {
+                const { content, id } = bottle;
+                chain.push(`瓶子编号${id}：${content.includes("<audio") ? "[语音]" : content.includes("<video") ? "[视频]" : content}`);
+              }
+              if (config.usePage) chain.push(`\n第${page ?? 1}/${Math.ceil(bottlesLength / config.bottleLimit)}页`);
+            }
+            return chain.join('\n');
+          } else {
+            return "请@一个用户或输入用户ID！"
+          }
+        } else {
+          return "你没有权限！"
+        }
+
       })
 
     ctx.middleware(async (session, next) => {
