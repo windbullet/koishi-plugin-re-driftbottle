@@ -403,7 +403,7 @@ export function apply(ctx: Context, config: Config) {
         let bottleTime = new Date(time * 86400000);
         let bottleTimeStr = `${bottleTime.getFullYear()}年${bottleTime.getMonth() + 1}月${bottleTime.getDate()}日`
         chain.push({ 
-        'text': h.text(`你捞到了来自“${username}”的漂流瓶，编号为${id}！\n日期：${bottleTimeStr}\n${config.alwaysShowInst ? `发送“捞漂流瓶 ${id} [分页]”可以查看评论区的其他分页\n发送“评论瓶子 ${id} <内容>”可以在下面评论这只瓶子\n发送“评论瓶子 [-r <评论编号>] ${id} <内容>”可以回复评论区的评论\n`: ""}`), 
+        'text': h.text(`你捞到了来自“${username}”的漂流瓶，编号为${id}！\n日期：${bottleTimeStr}\n${config.alwaysShowInst ? `发送“捞漂流瓶 ${id} [分页]”可以查看评论区的其他分页\n发送“评论瓶子 ${id} <内容>”或引用瓶子消息就可以在下面评论这只瓶子\n发送“评论瓶子 [-r <评论编号>] ${id} <内容>”可以回复评论区的评论\n`: ""}`), 
         });
         chain.push({ 
           'id': uid, 
@@ -848,9 +848,9 @@ export function apply(ctx: Context, config: Config) {
       } else if (!/^你捞到了来自“(.*)”的漂流瓶，编号为(\d+)！/.test(session.quote.content)) {
         return next()
       } else {
-        await session.send("30秒内发送“取消”以取消评论瓶子")
+        const messageId = await session.send("30秒内发送“取消”以取消评论瓶子")
         if (await session.prompt(30000) === "取消") return "已取消评论瓶子"
-        let index = /^你捞到了来自“(.*)”的漂流瓶，编号为(\d+)！/.exec(session.quote.content)[2]
+        const index = /^你捞到了来自“(.*)”的漂流瓶，编号为(\d+)！/.exec(session.quote.content)[2]
         session.elements = session.elements.map((element) => {
           if (element.type !== "at" && element.attrs.content !== " ") {
             return element
@@ -859,6 +859,11 @@ export function apply(ctx: Context, config: Config) {
           }
         })
         await session.execute(`漂流瓶.评论瓶子 ${index} ${session.content}`)
+        try {
+          await session.bot.deleteMessage(session.channelId, messageId[0])
+        } catch {
+
+        }
       }
     })
 
