@@ -392,7 +392,7 @@ export function apply(ctx: Context, config: Config) {
               await session.send("这个漂流瓶中的静态资源无法储存，请查看日志！\n你可以尝试以下方法：\n保存图片后使用指令“扔漂流瓶 [图片]”（如果你要扔的是图片的话）\n缩短漂流瓶长度\n稍后重试\n联系开发者")
               await ctx.database.remove('bottle', { id: preview.id })
               logger.info(`${ preview.id }号漂流瓶已被删除`)
-              break
+              return
             }
             logger.warn(`${ preview.id }号漂流瓶资源储存失败（已重试${retry-1}/${config.maxRetry}次，将在${config.retryInterval}ms后重试：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
             try {
@@ -407,13 +407,37 @@ export function apply(ctx: Context, config: Config) {
       }
       
       if (config.preview) {
-        let bottleTime = new Date(preview.time * 86400000);
-        let bottleTimeStr = `${bottleTime.getFullYear()}年${bottleTime.getMonth() + 1}月${bottleTime.getDate()}日`
-        if (preview.content.includes("<audio") || preview.content.includes("<video")) {
-          await session.bot.sendMessage(session.event.channel.id, `你的${preview.id}号漂流瓶扔出去了！\n\n漂流瓶预览：`)
-          await session.bot.sendMessage(session.event.channel.id, preview.content)
-        } else {
-          await session.bot.sendMessage(session.event.channel.id, `你的${preview.id}号漂流瓶扔出去了！\n\n漂流瓶预览：\n${preview.content}`)
+        let retry = 0
+        while (true) {
+          try {
+            let bottleTime = new Date(preview.time * 86400000);
+            let bottleTimeStr = `${bottleTime.getFullYear()}年${bottleTime.getMonth() + 1}月${bottleTime.getDate()}日`
+            if (preview.content.includes("<audio") || preview.content.includes("<video")) {
+              await session.bot.sendMessage(session.event.channel.id, `你的${preview.id}号漂流瓶扔出去了！\n\n漂流瓶预览：`)
+              await session.bot.sendMessage(session.event.channel.id, preview.content)
+            } else {
+              await session.bot.sendMessage(session.event.channel.id, `你的${preview.id}号漂流瓶扔出去了！\n\n漂流瓶预览：\n${preview.content}`)
+            }
+            break
+            
+          } catch (e) {
+            retry++
+            let logger = new Logger('re-driftbottle')
+            if (retry > config.maxRetry) {
+              logger.warn(`${ preview.id }号漂流瓶预览发送失败（已重试${ config.maxRetry }次）：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
+              await session.send("这个漂流瓶无法发送，请查看日志！\n你可以尝试以下方法：\n保存图片后使用指令“扔漂流瓶 [图片]”（如果你要扔的是图片的话）\n缩短漂流瓶长度\n稍后重试\n联系开发者")
+              await ctx.database.remove('bottle', { id: preview.id })
+              logger.info(`${ preview.id }号漂流瓶已被删除`)
+              break
+            }
+            logger.warn(`${ preview.id }号漂流瓶预览发送失败（已重试${retry-1}/${config.maxRetry}次，将在${config.retryInterval}ms后重试：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
+            try {
+              await ctx.sleep(config.retryInterval)
+            } catch {
+              return
+            }
+            continue  
+          }
         }
       } else {
         return `你的${preview.id}号漂流瓶扔出去了！`;
@@ -650,7 +674,7 @@ export function apply(ctx: Context, config: Config) {
                 await session.send("这个评论中的静态资源无法储存，请查看日志！\n你可以尝试以下方法：\n保存图片后使用指令（如果你要扔的是图片的话）\n缩短漂流瓶长度\n稍后重试\n联系开发者")
                 await ctx.database.remove('comment', { id: preview.id })
                 logger.info(`${id}号漂流瓶中的${cid}号评论已被删除`)
-                break
+                return
               }
               logger.warn(`${id}号漂流瓶中的${cid}号评论资源储存失败（已重试${retry-1}/${config.maxRetry}次，将在${config.retryInterval}ms后重试：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
               try {
@@ -665,7 +689,29 @@ export function apply(ctx: Context, config: Config) {
         }
 
         if (config.preview) {
-          await session.bot.sendMessage(session.event.channel.id, '你的评论已经扔出去了！\n评论预览：\n' + cid + "." + session.username + "：" + ct + "\n");
+          let logger = new Logger("re-driftbottle")
+          let retry = 0
+          while (true) {
+            try {
+              await session.bot.sendMessage(session.event.channel.id, '你的评论已经扔出去了！\n评论预览：\n' + cid + "." + session.username + "：" + ct + "\n");
+              break
+            } catch (e) {
+              retry++
+              if (retry > config.maxRetry) {
+                await session.send("这个评论无法发送，请查看日志！\n你可以尝试以下方法：\n保存图片后使用指令“评论瓶子 [瓶子编号] [图片]”（如果你要扔的是图片的话）\n缩短评论长度\n稍后重试\n联系开发者")
+                logger.warn(`${id}号漂流瓶中的${cid}号评论预览发送失败（已重试${config.maxRetry}次）：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
+                await ctx.database.remove('comment', { bid: id, cid: cid });
+                logger.info(`已删除${id}号漂流瓶中的${cid}号评论`)
+                break
+              }
+              logger.warn(`${id}号漂流瓶中的${cid}号评论预览发送失败（已重试${retry-1}/${config.maxRetry}次，将在${config.retryInterval}ms后重试）：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
+              try {
+                await ctx.sleep(config.retryInterval)
+              } catch {
+                return
+              }
+            }
+          }
         } else {
           await session.bot.sendMessage(session.event.channel.id, '你的评论已经扔出去了！')
         }
