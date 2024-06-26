@@ -2,9 +2,16 @@
 // Copyright haku530 2023
 
 import { Context, Schema, Time, Random, h, Logger, Dict } from 'koishi'
+import { pathToFileURL } from "url"
+import { resolve } from 'path'
+import { promisify } from 'util'
+import { pipeline, Readable } from 'stream'
+import { createWriteStream } from 'fs'
+import mimedb from "mime-db" 
 import {} from "@koishijs/plugin-help"
 import {} from "@koishijs/plugin-notifier"
 
+const pipelineAsync = promisify(pipeline)
 
 export const name = 're-driftbottle'
 
@@ -44,6 +51,8 @@ export interface Config {
   debugMode: boolean;
   alwaysShowInst: boolean;
   maxLength: number;
+  path: string;
+  localSource: boolean
   commentLimit?: number;
   bottleLimit?: number;
   randomSend: boolean;
@@ -76,6 +85,15 @@ export const Config: Schema<Config> = Schema.intersect([
     preview: Schema.boolean()
       .description('扔漂流瓶时是否返回漂流瓶预览（顺便检测能不能发出去）')
       .default(true),
+    localSource: Schema.boolean()
+      .default(false)
+      .description('是否本地储存漂流瓶中的静态资源'),
+    path: Schema.path({
+      filters: ["directory"],
+      allowCreate: true
+    })
+      .description("漂流瓶静态资源本地储存路径")
+      .required(),
     maxRetry: Schema.number()
       .description('漂流瓶发送失败时的最大重试次数')
       .default(5),
@@ -91,6 +109,8 @@ export const Config: Schema<Config> = Schema.intersect([
     maxLength: Schema.number()
       .description('漂流瓶允许的最大长度（UTF-16 码元长度）')
       .default(500),
+
+
   }),
   Schema.intersect([
     Schema.object({
@@ -336,18 +356,31 @@ export function apply(ctx: Context, config: Config) {
         content: content, 
         time: Time.getDateNumber()
       });
-      
-      if (config.preview) {
+
+      if (config.localSource) {
         let retry = 0
         while (true) {
           try {
-            let bottleTime = new Date(preview.time * 86400000);
-            let bottleTimeStr = `${bottleTime.getFullYear()}年${bottleTime.getMonth() + 1}月${bottleTime.getDate()}日`
-            if (preview.content.includes("<audio") || preview.content.includes("<video")) {
-              await session.bot.sendMessage(session.event.channel.id, `你的${preview.id}号漂流瓶扔出去了！\n\n漂流瓶预览：`)
-              await session.bot.sendMessage(session.event.channel.id, preview.content)
-            } else {
-              await session.bot.sendMessage(session.event.channel.id, `你的${preview.id}号漂流瓶扔出去了！\n\n漂流瓶预览：\n${preview.content}`)
+            let flag = false
+            let elements = h.parse(content)
+            elements = await Promise.all(elements.map(async (element, index) => {
+              if (["img", "audio", "video"].includes(element.type) && !element.attrs.src.startsWith("file")) {
+                flag = true
+                let response = await ctx.http("get", element.attrs.src, {responseType: "stream"})
+                let responseStream = Readable.from(response.data)
+                let ext = mimedb[response.headers.get("content-type")]?.extensions?.[0]
+                let path = resolve(config.path, `bottle-${preview.id}-${index}.${ext}`)
+                let writer = createWriteStream(path)
+                await pipelineAsync(responseStream, writer)
+                element.attrs.src = pathToFileURL(path).href
+              }
+              return element
+            }))
+            
+            if (flag) {
+              await ctx.database.set("bottle", {id: preview.id}, {
+                content: elements.join("")
+              })
             }
             
             break
@@ -355,13 +388,13 @@ export function apply(ctx: Context, config: Config) {
             retry++
             let logger = new Logger('re-driftbottle')
             if (retry > config.maxRetry) {
-              logger.warn(`${ preview.id }号漂流瓶预览发送失败（已重试${ config.maxRetry }次）：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
-              await session.send("这个漂流瓶无法发送，请查看日志！\n你可以尝试以下方法：\n保存图片后使用指令“扔漂流瓶 [图片]”（如果你要扔的是图片的话）\n缩短漂流瓶长度\n稍后重试\n联系开发者")
+              logger.warn(`${ preview.id }号漂流瓶资源储存失败（已重试${ config.maxRetry }次）：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
+              await session.send("这个漂流瓶中的静态资源无法储存，请查看日志！\n你可以尝试以下方法：\n保存图片后使用指令“扔漂流瓶 [图片]”（如果你要扔的是图片的话）\n缩短漂流瓶长度\n稍后重试\n联系开发者")
               await ctx.database.remove('bottle', { id: preview.id })
               logger.info(`${ preview.id }号漂流瓶已被删除`)
               break
             }
-            logger.warn(`${ preview.id }号漂流瓶预览发送失败（已重试${retry-1}/${config.maxRetry}次，将在${config.retryInterval}ms后重试：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
+            logger.warn(`${ preview.id }号漂流瓶资源储存失败（已重试${retry-1}/${config.maxRetry}次，将在${config.retryInterval}ms后重试：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
             try {
               await ctx.sleep(config.retryInterval)
             } catch {
@@ -369,6 +402,18 @@ export function apply(ctx: Context, config: Config) {
             }
             continue  
           }
+        }
+
+      }
+      
+      if (config.preview) {
+        let bottleTime = new Date(preview.time * 86400000);
+        let bottleTimeStr = `${bottleTime.getFullYear()}年${bottleTime.getMonth() + 1}月${bottleTime.getDate()}日`
+        if (preview.content.includes("<audio") || preview.content.includes("<video")) {
+          await session.bot.sendMessage(session.event.channel.id, `你的${preview.id}号漂流瓶扔出去了！\n\n漂流瓶预览：`)
+          await session.bot.sendMessage(session.event.channel.id, preview.content)
+        } else {
+          await session.bot.sendMessage(session.event.channel.id, `你的${preview.id}号漂流瓶扔出去了！\n\n漂流瓶预览：\n${preview.content}`)
         }
       } else {
         return `你的${preview.id}号漂流瓶扔出去了！`;
@@ -490,6 +535,7 @@ export function apply(ctx: Context, config: Config) {
         let cnid = session.event?.channel?.id;
         const { uid: buid, gid: bgid, cnid: bcnid } = bottle;
         ct = config.allowPic ? ct : ct.replace(/<.*?>/g, '');
+        if (ct.includes("<audio ") || ct.includes("<video ")) return '评论暂不支持音频或视频！';
         if (ct.length > config.maxLength) return '内容过长！';
         if (ct.length < 1) return '内容过短！';
         ct = "“" + ct + "”"
@@ -558,7 +604,7 @@ export function apply(ctx: Context, config: Config) {
         }
         let data = await ctx.database.get('comment', { bid: id });
         let cid = data.length === 0 ? 1 : Math.max(...data.map(c => c.cid)) + 1;
-        await ctx.database.create('comment', {
+        let preview = await ctx.database.create('comment', {
           cid: cid,
           bid: id, 
           uid: uid, 
@@ -569,30 +615,59 @@ export function apply(ctx: Context, config: Config) {
           time: Time.getDateNumber() 
         });
 
-        if (config.preview) {
-          let logger = new Logger("re-driftbottle")
+        if (config.localSource) {
           let retry = 0
           while (true) {
             try {
-              await session.bot.sendMessage(session.event.channel.id, '你的评论已经扔出去了！\n评论预览：\n' + cid + "." + session.username + "：" + ct + "\n");
+              let flag = false
+              let elements = h.parse(ct)
+              elements = await Promise.all(elements.map(async (element, index) => {
+                if (["img", "audio", "video"].includes(element.type) && !element.attrs.src.startsWith("file")) {
+                  flag = true
+                  let response = await ctx.http("get", element.attrs.src, {responseType: "stream"})
+                  let responseStream = Readable.from(response.data)
+                  let ext = mimedb[response.headers.get("content-type")]?.extensions?.[0]
+                  let path = resolve(config.path, `bottle-${preview.id}-${index}.${ext}`)
+                  let writer = createWriteStream(path)
+                  await pipelineAsync(responseStream, writer)
+                  element.attrs.src = pathToFileURL(path).href
+                }
+                return element
+              }))
+              
+              if (flag) {
+                await ctx.database.set("comment", {id: preview.id}, {
+                  content: elements.join("")
+                })
+              }
+              
               break
             } catch (e) {
               retry++
+              let logger = new Logger('re-driftbottle')
               if (retry > config.maxRetry) {
-                await session.send("这个评论无法发送，请查看日志！\n你可以尝试以下方法：\n保存图片后使用指令“评论瓶子 [瓶子编号] [图片]”（如果你要扔的是图片的话）\n缩短评论长度\n稍后重试\n联系开发者")
-                logger.warn(`${id}号漂流瓶中的${cid}号评论预览发送失败（已重试${config.maxRetry}次）：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
-                await ctx.database.remove('comment', { bid: id, cid: cid });
-                logger.info(`已删除${id}号漂流瓶中的${cid}号评论`)
+                logger.warn(`${id}号漂流瓶中的${cid}号评论资源储存失败（已重试${ config.maxRetry }次）：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
+                await session.send("这个评论中的静态资源无法储存，请查看日志！\n你可以尝试以下方法：\n保存图片后使用指令（如果你要扔的是图片的话）\n缩短漂流瓶长度\n稍后重试\n联系开发者")
+                await ctx.database.remove('comment', { id: preview.id })
+                logger.info(`${id}号漂流瓶中的${cid}号评论已被删除`)
                 break
               }
-              logger.warn(`${id}号漂流瓶中的${cid}号评论预览发送失败（已重试${retry-1}/${config.maxRetry}次，将在${config.retryInterval}ms后重试）：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
+              logger.warn(`${id}号漂流瓶中的${cid}号评论资源储存失败（已重试${retry-1}/${config.maxRetry}次，将在${config.retryInterval}ms后重试：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
               try {
                 await ctx.sleep(config.retryInterval)
               } catch {
                 return
               }
+              continue  
             }
           }
+  
+        }
+
+        if (config.preview) {
+          await session.bot.sendMessage(session.event.channel.id, '你的评论已经扔出去了！\n评论预览：\n' + cid + "." + session.username + "：" + ct + "\n");
+        } else {
+          await session.bot.sendMessage(session.event.channel.id, '你的评论已经扔出去了！')
         }
       })
 
@@ -866,6 +941,83 @@ export function apply(ctx: Context, config: Config) {
         }
       }
     })
+
+    ctx.command("漂流瓶.本地储存化静态资源", "将漂流瓶中的静态网络资源储存至本地")
+      .alias("本地储存化静态资源")
+      .action(async ({session}) => {
+        if (!config.manager.includes(session.event.user.id)) {
+          return '你没有权限！';
+        }
+
+        session.send("正在写入至本地...")
+
+        try {
+          let bottles = await ctx.database.get("bottle", {})
+
+          let bottleCount = 0
+          for (let bottle of bottles) {
+            let flag = false
+            let elements = h.parse(bottle.content)
+
+            elements = await Promise.all(elements.map(async (element, index) => {
+              if (["img", "audio", "video"].includes(element.type) && !element.attrs.src.startsWith("file")) {
+                flag = true
+                bottleCount++
+                let response = await ctx.http("get", element.attrs.src, {responseType: "stream"})
+                let responseStream = Readable.from(response.data)
+                let ext = mimedb[response.headers.get("content-type")]?.extensions?.[0]
+                let path = resolve(config.path, `bottle-${bottle.id}-${index}.${ext}`)
+                let writer = createWriteStream(path)
+                await pipelineAsync(responseStream, writer)
+                element.attrs.src = pathToFileURL(path).href
+              }
+              return element
+            }))
+
+            if (flag) {
+              await ctx.database.set("bottle", {id: bottle.id}, {
+                content: elements.join("")
+              })
+            }
+          }
+
+          let comments = await ctx.database.get("comment", {})
+
+          let commentCount = 0
+          for (let comment of comments) {
+            let flag = false
+            let elements = h.parse(comment.content)
+
+            elements = await Promise.all(elements.map(async (element, index) => {
+              if (["img", "audio", "video"].includes(element.type) && !element.attrs.src.startsWith("file")) {
+                flag = true
+                commentCount++
+                let response = await ctx.http("get", element.attrs.src, {responseType: "stream"})
+                let responseStream = Readable.from(response.data)
+                let ext = mimedb[response.headers.get("content-type")]?.extensions?.[0]
+                let path = resolve(config.path, `comment-${comment.id}-${index}.${ext}`)
+                let writer = createWriteStream(path)
+                await pipelineAsync(responseStream, writer)
+                element.attrs.src = pathToFileURL(path).href
+              }
+              return element
+            }))
+
+            if (flag) {
+              await ctx.database.set("comment", {id: comment.id}, {
+                content: elements.join("")
+              })
+            }
+          }
+
+          return `本地储存完成，共储存${bottleCount + commentCount}个静态资源`
+        } catch (e) {
+          ctx.logger("re-driftbottle").warn(`漂流瓶本地储存失败：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
+          return "漂流瓶本地储存失败，请查看日志！"
+        }
+        
+      })
+
 
 }    
 async function extendTables(ctx) {
