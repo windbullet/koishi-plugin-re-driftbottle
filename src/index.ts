@@ -101,7 +101,7 @@ export const Config: Schema<Config> = Schema.intersect([
       .description('漂流瓶发送失败时的重试间隔（毫秒）')
       .default(500),
     debugMode: Schema.boolean()
-      .description('漂流瓶发送失败时，在日志显示调用栈')
+      .description('抛出错误时在日志显示调用栈')
       .default(false),
     alwaysShowInst: Schema.boolean()
       .description('是否在捞漂流瓶时总是显示使用说明')
@@ -790,7 +790,8 @@ export function apply(ctx: Context, config: Config) {
       .alias('删除无效瓶子')
       .usage("警告：这个功能会将选中的所有漂流瓶发送出来，请自行承担风险")
       .example('删除无效瓶子 1 10')
-      .action(async ({ session }, start, end) => {
+      .option("delay", "-d <value:number> 发送的间隔(ms)")
+      .action(async ({ session, options }, start, end) => {
         if (!config.manager.includes(session.event.user.id)) {
           return '你没有权限删除无效瓶子！';
         } else if (start && end === undefined) {
@@ -828,6 +829,11 @@ export function apply(ctx: Context, config: Config) {
           while (true) {            
             try {
               await session.bot.sendMessage(session.event.channel.id, result);
+              try {
+                await ctx.sleep(options.delay)
+              } catch {
+                return
+              }
               break
             } catch (e) {
               retry++
@@ -866,7 +872,8 @@ export function apply(ctx: Context, config: Config) {
       .alias("删除无效评论")
       .usage("警告：这个功能会将选中的所有漂流瓶下的评论发送出来，请自行承担风险")
       .example('删除无效评论 1 10')
-      .action(async ({ session }, start, end) => {
+      .option("delay", "-d <value:number> 发送的间隔(ms)")
+      .action(async ({ session, options }, start, end) => {
         if (!config.manager.includes(session.event.user.id)) {
           return '你没有权限删除无效评论！';
         } else if (start && end === undefined) {
@@ -890,6 +897,11 @@ export function apply(ctx: Context, config: Config) {
             while (true) {            
               try {
                 await session.bot.sendMessage(session.event.channel.id, commentId + "." + commentName + "：" + commentContent + "\n");
+                try {
+                  await ctx.sleep(options.delay)
+                } catch {
+                  return
+                }
                 break
               } catch (e) {
                 retry++
@@ -995,20 +1007,24 @@ export function apply(ctx: Context, config: Config) {
           return '你没有权限！';
         }
 
+        await session.send("警告：这个功能会将所有漂流瓶的静态资源改为本地储存且无法复原，如果你确定要这么做，请在30秒内发送“是”")
+        let confirm = await session.prompt(30000);
+        if (confirm !== '是') return "已取消操作"
+
         session.send("正在写入至本地...")
 
-        try {
-          let bottles = await ctx.database.get("bottle", {})
+        let bottles = await ctx.database.get("bottle", {})
 
-          let bottleCount = 0
-          for (let bottle of bottles) {
+        let bottleCount = 0
+        let bottleFatal = []
+        for (let bottle of bottles) {
+          try {
             let flag = false
             let elements = h.parse(bottle.content)
 
             elements = await Promise.all(elements.map(async (element, index) => {
               if (["img", "audio", "video"].includes(element.type) && !element.attrs.src.startsWith("file")) {
                 flag = true
-                bottleCount++
                 let response = await ctx.http("get", element.attrs.src, {responseType: "stream"})
                 let responseStream = Readable.from(response.data)
                 let ext = mimedb[response.headers.get("content-type")]?.extensions?.[0]
@@ -1016,6 +1032,7 @@ export function apply(ctx: Context, config: Config) {
                 let writer = createWriteStream(path)
                 await pipelineAsync(responseStream, writer)
                 element.attrs.src = pathToFileURL(path).href
+                bottleCount++
               }
               return element
             }))
@@ -1025,19 +1042,25 @@ export function apply(ctx: Context, config: Config) {
                 content: elements.join("")
               })
             }
+          } catch (e) {
+            bottleFatal.push(bottle.id)
+            ctx.logger("re-driftbottle").warn(`${bottle.id}号漂流瓶本地储存化失败：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
           }
+          
+        }
 
-          let comments = await ctx.database.get("comment", {})
+        let comments = await ctx.database.get("comment", {})
 
-          let commentCount = 0
-          for (let comment of comments) {
+        let commentCount = 0
+        let commentFatal = []
+        for (let comment of comments) {
+          try {
             let flag = false
             let elements = h.parse(comment.content)
 
             elements = await Promise.all(elements.map(async (element, index) => {
               if (["img", "audio", "video"].includes(element.type) && !element.attrs.src.startsWith("file")) {
                 flag = true
-                commentCount++
                 let response = await ctx.http("get", element.attrs.src, {responseType: "stream"})
                 let responseStream = Readable.from(response.data)
                 let ext = mimedb[response.headers.get("content-type")]?.extensions?.[0]
@@ -1045,6 +1068,7 @@ export function apply(ctx: Context, config: Config) {
                 let writer = createWriteStream(path)
                 await pipelineAsync(responseStream, writer)
                 element.attrs.src = pathToFileURL(path).href
+                commentCount++
               }
               return element
             }))
@@ -1054,13 +1078,17 @@ export function apply(ctx: Context, config: Config) {
                 content: elements.join("")
               })
             }
+          } catch (e) {
+            commentFatal.push(comment.id)
+            ctx.logger("re-driftbottle").warn(`${comment.bid}中的${comment.cid}号评论本地储存化失败：${config.debugMode ? e.stack : e.message}`)
           }
 
-          return `本地储存完成，共储存${bottleCount + commentCount}个静态资源`
-        } catch (e) {
-          ctx.logger("re-driftbottle").warn(`漂流瓶本地储存失败：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
-          return "漂流瓶本地储存失败，请查看日志！"
         }
+
+        return `本地储存完成，共储存${bottleCount + commentCount}个静态资源
+${bottleFatal.length > 0 ? `id为 ${bottleFatal.join(", ")} 的漂流瓶储存失败` : ""}
+${commentFatal.length > 0 ? `id为 ${commentFatal.join(", ")} 的评论储存失败` : ""}
+${bottleFatal.length > 0 || commentFatal.length > 0 ? `请查看日志！` : ""}`
         
       })
 
