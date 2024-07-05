@@ -90,7 +90,7 @@ export const Config: Schema<Config> = Schema.intersect([
       .description('扔漂流瓶时是否返回漂流瓶预览（顺便检测能不能发出去）')
       .default(true),
     hotThresholdValue: Schema.number()
-      .description('会被选为精选瓶子的评论阈值')
+      .description('会被选为精选瓶子的评论数阈值')
       .default(10),
     localSource: Schema.boolean()
       .default(false)
