@@ -20,11 +20,14 @@ export const usage = `本插件翻新自https://www.npmjs.com/package/koishi-plu
 
 export interface Bottle {
   id: number;
+  name: string;
   uid: string;
   gid: string;
   cnid: string;
   username: string;
   content: string;
+  isHot: number;
+  commentCount: number;
   time: number;
 }
 export interface Comment {
@@ -50,6 +53,7 @@ export interface Config {
   retryInterval: number;
   debugMode: boolean;
   alwaysShowInst: boolean;
+  hotThresholdValue: number;
   maxLength: number;
   path: string;
   localSource: boolean
@@ -85,6 +89,9 @@ export const Config: Schema<Config> = Schema.intersect([
     preview: Schema.boolean()
       .description('扔漂流瓶时是否返回漂流瓶预览（顺便检测能不能发出去）')
       .default(true),
+    hotThresholdValue: Schema.number()
+      .description('会被选为精选瓶子的评论阈值')
+      .default(10),
     localSource: Schema.boolean()
       .default(false)
       .description('是否本地储存漂流瓶中的静态资源'),
@@ -122,7 +129,7 @@ export const Config: Schema<Config> = Schema.intersect([
       Schema.object({
         usePage: Schema.const(true).required(),
         commentLimit: Schema.number().description("捞漂流瓶时一页显示多少个评论").required(),
-        bottleLimit: Schema.number().description("查看我的瓶子时一页显示多少个瓶子").required(),
+        bottleLimit: Schema.number().description("查看我的/精选瓶子或通过名字捞漂流瓶时一页显示多少个瓶子").required(),
       }),
       Schema.object({
         usePage: Schema.const(false),
@@ -153,9 +160,34 @@ export const Config: Schema<Config> = Schema.intersect([
 
 export const inject = ["database", "notifier"]
 
-export function apply(ctx: Context, config: Config) {
+export async function apply(ctx: Context, config: Config) {
   const notifier = ctx.notifier.create()
-  extendTables(ctx)
+  await extendTables(ctx)
+
+  let currentBottles = await ctx.database.get("bottle", {})
+  if (currentBottles[0].commentCount === -1) {
+    let count = {}
+    
+    for (let bottle of currentBottles){
+      count[bottle.id] = 0
+    }
+
+    for (let comment of await ctx.database.get("comment", {})) {
+      count[comment.bid]++  
+    }
+
+    let bottles = []
+
+    for (let [id, commentCount] of Object.entries(count)) {
+      bottles.push({
+        id: +id,
+        commentCount
+      })
+    }
+
+    await ctx.database.upsert("bottle", bottles)
+  }
+  
 
   if (config.randomSend) {
     async function countdown(time:number) {
@@ -354,6 +386,7 @@ export function apply(ctx: Context, config: Config) {
         cnid: cnid,
         username: session.username,
         content: content, 
+        commentCount: 0,
         time: Time.getDateNumber()
       });
 
@@ -413,10 +446,10 @@ export function apply(ctx: Context, config: Config) {
             let bottleTime = new Date(preview.time * 86400000);
             let bottleTimeStr = `${bottleTime.getFullYear()}年${bottleTime.getMonth() + 1}月${bottleTime.getDate()}日`
             if (preview.content.includes("<audio") || preview.content.includes("<video")) {
-              await session.bot.sendMessage(session.event.channel.id, `你的${preview.id}号漂流瓶扔出去了！\n\n漂流瓶预览：`)
+              await session.bot.sendMessage(session.event.channel.id, `你的${preview.id}号漂流瓶扔出去了！\n发送“漂流瓶.命名瓶子 编号 名字”可以命名瓶子！（可以重名哦）\n命名后可以发送“漂流瓶.捞漂流瓶 名字”来捞漂流瓶，只要名字包含就能被捞到！\n\n漂流瓶预览：`)
               await session.bot.sendMessage(session.event.channel.id, preview.content)
             } else {
-              await session.bot.sendMessage(session.event.channel.id, `你的${preview.id}号漂流瓶扔出去了！\n\n漂流瓶预览：\n${preview.content}`)
+              await session.bot.sendMessage(session.event.channel.id, `你的${preview.id}号漂流瓶扔出去了！\n发送“漂流瓶.命名瓶子 编号 名字”可以命名瓶子！（可以重名哦）\n命名后可以发送“漂流瓶.捞漂流瓶 名字”来捞漂流瓶，只要名字包含就能被捞到！\n\n漂流瓶预览：\n${preview.content}`)
             }
             break
             
@@ -440,22 +473,40 @@ export function apply(ctx: Context, config: Config) {
           }
         }
       } else {
-        return `你的${preview.id}号漂流瓶扔出去了！`;
+        return h.text(`你的${preview.id}号漂流瓶扔出去了！\n发送“漂流瓶.命名瓶子 <编号> <名字>”可以命名瓶子！（可以重名哦）\n命名后可以发送“漂流瓶.捞漂流瓶 名字”来捞漂流瓶，只要名字包含就能被捞到！`);
       }
 
     })
 
-  ctx.command("漂流瓶.捞漂流瓶 [bottleId:posint] [page:posint]")
+  ctx.command("漂流瓶.捞漂流瓶 [bottleId:string] [page:posint]")
     .alias("捞漂流瓶")
-    .usage('捞漂流瓶 <瓶子编号> [分页]\n不填瓶子编号则随机捞一个瓶子')
+    .usage('捞漂流瓶 <瓶子编号/标题> [分页]\n不填瓶子编号则随机捞一个瓶子')
     .action(async ({ session }, bottleId, page) => {
       let bottles;
       if (!bottleId) {
         bottles = await ctx.database.get("bottle", {})
         if (!bottles || bottles.length < 1) return "没有瓶子了！"
       } else {
-        bottles = await ctx.database.get("bottle", {id: bottleId})
-        if (!bottles || bottles.length < 1) return "没有这个瓶子！"
+        if (isNaN(+bottleId)) {
+          bottles = await ctx.database
+            .select('bottle')
+            .where({name: {$regex: new RegExp(bottleId)}})
+            .orderBy('id', 'asc')
+            .limit(config.usePage ? config.bottleLimit : Infinity)
+            .offset(config.usePage ? ((page ?? 1) - 1) * config.bottleLimit : 0)
+            .execute()
+        } else {
+          bottles = await ctx.database.get("bottle", {id: +bottleId})
+        }
+        if (!bottles || bottles.length < 1) {
+          return "没有这个瓶子！"
+        } else if (bottles.length > 1) {
+          let bottlesLength = (await ctx.database.get("bottle", {name: {$regex: new RegExp(bottleId)}})).length
+          return h.text(`发送“捞漂流瓶 <编号>”捞取指定瓶子
+发送“捞漂流瓶 ${bottleId} <分页>”切换分页
+请选择你要捞的瓶子（编号：标题）\n${bottles.map((bottle) => `${bottle.id}：${bottle.name}`).join("\n")}
+${config.usePage ? `\n第${page ?? 1}/${Math.ceil(bottlesLength / config.bottleLimit)}页` : ""}`)
+        }
       }
       let retry = 0
       while (true) {
@@ -464,7 +515,8 @@ export function apply(ctx: Context, config: Config) {
         const commentsLength = (await ctx.database.get("comment", {bid: id})).length;
         const comments = await ctx.database
           .select('comment')
-          .where({bid: id})
+          .where({ bid: id })
+          .orderBy('cid', 'asc')
           .limit(config.usePage ? config.commentLimit : Infinity)
           .offset(config.usePage ? ((page ?? 1) - 1) * config.commentLimit : 0)
           .execute()
@@ -472,7 +524,7 @@ export function apply(ctx: Context, config: Config) {
         let bottleTime = new Date(time * 86400000);
         let bottleTimeStr = `${bottleTime.getFullYear()}年${bottleTime.getMonth() + 1}月${bottleTime.getDate()}日`
         chain.push({ 
-        'text': h.text(`你捞到了来自“${username}”的漂流瓶，编号为${id}！\n日期：${bottleTimeStr}\n${config.alwaysShowInst ? `发送“捞漂流瓶 ${id} [分页]”可以查看评论区的其他分页\n发送“评论瓶子 ${id} <内容>”或引用瓶子消息就可以在下面评论这只瓶子\n发送“评论瓶子 [-r <评论编号>] ${id} <内容>”可以回复评论区的评论\n`: ""}`), 
+        'text': h.text(`你捞到了${id}号漂流瓶，来自“${username}”！\n标题：${bottle.name}\n日期：${bottleTimeStr}\n${config.alwaysShowInst ? `发送“捞漂流瓶 ${id} [分页]”可以查看评论区的其他分页\n发送“评论瓶子 ${id} <内容>”或引用瓶子消息就可以在下面评论这只瓶子\n发送“评论瓶子 [-r <评论编号>] ${id} <内容>”可以回复评论区的评论\n`: ""}`), 
         });
         chain.push({ 
           'id': uid, 
@@ -694,6 +746,7 @@ export function apply(ctx: Context, config: Config) {
           while (true) {
             try {
               await session.bot.sendMessage(session.event.channel.id, '你的评论已经扔出去了！\n评论预览：\n' + cid + "." + session.username + "：" + ct + "\n");
+              await ctx.database.set("bottle", {id}, {commentCount: (await ctx.database.get("bottle", {id}))[0].commentCount + 1})
               break
             } catch (e) {
               retry++
@@ -714,6 +767,7 @@ export function apply(ctx: Context, config: Config) {
           }
         } else {
           await session.bot.sendMessage(session.event.channel.id, '你的评论已经扔出去了！')
+          await ctx.database.set("bottle", {id}, {commentCount: (await ctx.database.get("bottle", {id})).length + 1})
         }
       })
 
@@ -1092,16 +1146,89 @@ ${bottleFatal.length > 0 || commentFatal.length > 0 ? `请查看日志！` : ""}
         
       })
 
+    ctx.command("漂流瓶.命名瓶子 <id:posint> <name:string>")
+      .alias("命名瓶子")
+      .action(async ({session}, id, name) => {
+        let bottle = await ctx.database.get("bottle", {id})
+
+        if (bottle.length == 0) {
+          return "没有这个瓶子！"
+        } else if (bottle[0].uid !== session.userId && !config.manager.includes(session.userId)) {
+          return "只有漂流瓶管理员才能命名别人的瓶子！"
+        } else if (!isNaN(+name)) {
+          return "名字不能是纯数字！"
+        }
+
+        await ctx.database.set("bottle", {id}, {name})
+        return `命名成功！`
+      })
+
+    ctx.command("漂流瓶.瓶子黄页 <page:posint>")
+      .alias("瓶子黄页")
+      .action(async ({session}, page) => {
+        let bottlesLength = (await ctx.database.get("bottle", {})).length
+        let bottles = await ctx.database
+          .select('bottle')
+          .where({})
+          .orderBy('id', 'asc')
+          .limit(10)
+          .offset(((page ?? 1) - 1) * 10)
+          .execute()
+
+        return `使用“漂流瓶.瓶子黄页 分页”切换分页\n编号：标题\n${bottles.map((bottle) => `${bottle.id}：${bottle.name}`).join("\n")}
+\n第${page ?? 1}/${Math.ceil(bottlesLength / 10)}页`
+      })
+
+    ctx.command("漂流瓶.精选瓶子 <page:posint>")
+      .alias("精选瓶子")
+      .action(async ({session}, page) => {
+        let bottlesLength = (await ctx.database.get("bottle", {isHot: 1})).length
+
+        let bottles = await ctx.database
+          .select('bottle')
+          .where({$or: [{isHot: 1}, {commentCount: {$gte: config.hotThresholdValue}}]})
+          .orderBy('id', 'asc')
+          .limit(config.bottleLimit)
+          .offset(((page ?? 1) - 1) * config.bottleLimit)
+          .execute()
+
+        return `使用“漂流瓶.精选瓶子 分页”切换分页\n编号：标题\n${bottles.map((bottle) => `${bottle.id} (${bottle.isHot ? "管理员精选" : `评论数 ${bottle.commentCount}`})：${bottle.name}`).join("\n")}
+\n第${page ?? 1}/${Math.ceil(bottlesLength / config.bottleLimit)}页`
+      })
+
+    ctx.command("漂流瓶.设置精选瓶子 <id:posint>")
+      .alias("设置精选瓶子")
+      .action(async ({session}, id) => {
+        let bottle = await ctx.database.get("bottle", {id})
+
+        if (bottle.length == 0) {
+          return "没有这个瓶子！"
+        } else if (!config.manager.includes(session.userId)) {
+          return "只有漂流瓶管理员才能设置精选瓶子！"
+        }
+
+        await ctx.database.set("bottle", {id}, {isHot: 1})
+        return `设置成功！`
+      })
 
 }    
+
 async function extendTables(ctx) {
   await ctx.model.extend('bottle', {
     id: 'unsigned',
+    name: 'string',
     uid: 'string',
     gid: 'string',
     cnid: 'string',
     username: 'string',
     content: 'text',
+    isHot: 'unsigned',
+    commentCount: {
+      type: 'integer',
+      length: 16,
+      initial: -1,
+      nullable: true
+    },
     time: 'unsigned',
   }, {primary: "id", autoInc: true});
 
