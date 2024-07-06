@@ -1032,12 +1032,12 @@ ${config.usePage ? `\n第${page ?? 1}/${Math.ceil(bottlesLength / config.bottleL
     ctx.middleware(async (session, next) => {
       if (session?.quote?.user?.id !== session.selfId) {
         return next()
-      } else if (!/^你捞到了来自“(.*)”的漂流瓶，编号为(\d+)！/.test(session.quote.content)) {
+      } else if (!/^你捞到了(\d+)号漂流瓶，来自“(.*)”！/.test(session.quote.content)) {
         return next()
       } else {
         const messageId = await session.send("30秒内发送“取消”以取消评论瓶子")
         if (await session.prompt(30000) === "取消") return "已取消评论瓶子"
-        const index = /^你捞到了来自“(.*)”的漂流瓶，编号为(\d+)！/.exec(session.quote.content)[2]
+        const index = /^你捞到了(\d+)号漂流瓶，来自“(.*)”！/.exec(session.quote.content)[1]
         session.elements = session.elements.map((element) => {
           if (element.type !== "at" && element.attrs.content !== " ") {
             return element
