@@ -165,7 +165,7 @@ export async function apply(ctx: Context, config: Config) {
   await extendTables(ctx)
 
   let currentBottles = await ctx.database.get("bottle", {})
-  if (currentBottles[0].commentCount === -1) {
+  if (currentBottles?.[0]?.commentCount === -1) {
     let count = {}
     
     for (let bottle of currentBottles){
@@ -814,11 +814,11 @@ ${config.usePage ? `\n第${page ?? 1}/${Math.ceil(bottlesLength / config.bottleL
         const chain = [];
         chain.push(`你扔出去的瓶子有：`);
         if (options.list) {
-          chain.push(bottles.map(bottle => bottle.id).join(' | '));
+          chain.push(bottles.map(bottle => `${bottle.id}${bottle.name ? `(${bottle.name})` : ""}`).join(' | '));
         } else {
           for (const bottle of bottles) {
-            const { content, id } = bottle;
-            chain.push(`瓶子编号${id}：${content.includes("<audio") ? "[语音]" : content.includes("<video") ? "[视频]" : content}`);
+            const { content, id, name } = bottle;
+            chain.push(`瓶子编号${id}${name ? `(${name})` : ""}：${content.includes("<audio") ? "[语音]" : content.includes("<video") ? "[视频]" : content}`);
           }
           if (config.usePage) chain.push(`\n第${page ?? 1}/${Math.ceil(bottlesLength / config.bottleLimit)}页`);
         }
@@ -1011,11 +1011,11 @@ ${config.usePage ? `\n第${page ?? 1}/${Math.ceil(bottlesLength / config.bottleL
             const chain = [];
             chain.push(`该用户扔出去的瓶子有：`);
             if (options.list) {
-              chain.push(bottles.map(bottle => bottle.id).join(' | '));
+              chain.push(bottles.map(bottle => `${bottle.id}${bottle.name ? `(${bottle.name})` : ""}`).join(' | '));
             } else {
               for (const bottle of bottles) {
-                const { content, id } = bottle;
-                chain.push(`瓶子编号${id}：${content.includes("<audio") ? "[语音]" : content.includes("<video") ? "[视频]" : content}`);
+                const { content, id, name } = bottle;
+                chain.push(`瓶子编号${id}${name ? `(${name})` : ""}：${content.includes("<audio") ? "[语音]" : content.includes("<video") ? "[视频]" : content}`);
               }
               if (config.usePage) chain.push(`\n第${page ?? 1}/${Math.ceil(bottlesLength / config.bottleLimit)}页`);
             }
@@ -1171,8 +1171,8 @@ ${bottleFatal.length > 0 || commentFatal.length > 0 ? `请查看日志！` : ""}
           .select('bottle')
           .where({})
           .orderBy('id', 'asc')
-          .limit(10)
-          .offset(((page ?? 1) - 1) * 10)
+          .limit(100)
+          .offset(((page ?? 1) - 1) * 100)
           .execute()
 
         return `使用“漂流瓶.瓶子黄页 分页”切换分页\n编号：标题\n${bottles.map((bottle) => `${bottle.id}：${bottle.name}`).join("\n")}
