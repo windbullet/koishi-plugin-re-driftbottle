@@ -10,6 +10,7 @@ import { createWriteStream } from 'fs'
 import mimedb from "mime-db" 
 import {} from "@koishijs/plugin-help"
 import {} from "@koishijs/plugin-notifier"
+import {} from "koishi-plugin-puppeteer"
 
 const pipelineAsync = promisify(pipeline)
 
@@ -45,7 +46,6 @@ export interface Comment {
 export interface Config {
   manager: string[];
   allowPic: boolean;
-  usePage: boolean;
   allowDropOthers: boolean;
   selfDrop: boolean;
   preview: boolean;
@@ -57,8 +57,12 @@ export interface Config {
   maxLength: number;
   path: string;
   localSource: boolean
-  commentLimit?: number;
-  bottleLimit?: number;
+  indexToImage: boolean;
+  commentLimit: number;
+  bottleLimit: number;
+  hotBottleLimit: number;
+  indexLimit: number;
+  nameBottleLimit: number;
   randomSend: boolean;
   minInterval?: number;
   maxInterval?: number;
@@ -77,30 +81,6 @@ export const Config: Schema<Config> = Schema.intersect([
     manager: Schema.array(Schema.string())
       .required()
       .description('管理员QQ，一个项目填一个ID'),
-    allowPic: Schema.boolean()
-      .description('是否允许发送图片')
-      .default(true),
-    allowDropOthers: Schema.boolean()
-      .description('是否允许普通用户扔其他人的消息')
-      .default(false),
-    selfDrop: Schema.boolean()
-      .description('扔别人的消息时是否算作自己扔的')
-      .default(false),
-    preview: Schema.boolean()
-      .description('扔漂流瓶时是否返回漂流瓶预览（顺便检测能不能发出去）')
-      .default(true),
-    hotThresholdValue: Schema.number()
-      .description('会被选为精选瓶子的评论数阈值')
-      .default(10),
-    localSource: Schema.boolean()
-      .default(false)
-      .description('是否本地储存漂流瓶中的静态资源'),
-    path: Schema.path({
-      filters: ["directory"],
-      allowCreate: true
-    })
-      .description("漂流瓶静态资源本地储存路径")
-      .required(),
     maxRetry: Schema.number()
       .description('漂流瓶发送失败时的最大重试次数')
       .default(5),
@@ -110,38 +90,71 @@ export const Config: Schema<Config> = Schema.intersect([
     debugMode: Schema.boolean()
       .description('抛出错误时在日志显示调用栈')
       .default(false),
-    alwaysShowInst: Schema.boolean()
-      .description('是否在捞漂流瓶时总是显示使用说明')
+  }).description("基础设置"),
+
+  Schema.object({
+    allowPic: Schema.boolean()
+      .description('是否允许发送图片')
       .default(true),
     maxLength: Schema.number()
       .description('漂流瓶允许的最大长度（UTF-16 码元长度）')
       .default(500),
+    allowDropOthers: Schema.boolean()
+      .description('是否允许普通用户扔其他人的消息')
+      .default(false),
+    selfDrop: Schema.boolean()
+      .description('扔别人的消息时是否算作自己扔的')
+      .default(false),
+    localSource: Schema.boolean()
+      .default(false)
+      .description('是否本地储存漂流瓶中的静态资源'),
+    path: Schema.path({
+      filters: ["directory"],
+      allowCreate: true
+    })
+      .description("漂流瓶静态资源本地储存路径")
+      .required(),
+  }).description("漂流瓶设置"),
 
+  Schema.object({
+    preview: Schema.boolean()
+      .description('扔漂流瓶时是否返回漂流瓶预览（顺便检测能不能发出去）')
+      .default(true),
+    alwaysShowInst: Schema.boolean()
+      .description('是否在捞漂流瓶时总是显示使用说明')
+      .default(true),
+    hotThresholdValue: Schema.number()
+      .description('会被选为精选瓶子的评论数阈值')
+      .default(10),
+    indexToImage: Schema.boolean()
+      .description('是否将瓶子黄页转换为图片发送（需要 puppeteer 服务）')
+      .default(false),
+  }).description("显示设置"),
 
-  }),
-  Schema.intersect([
-    Schema.object({
-      usePage: Schema.boolean()
-        .description('显示评论或查看我的瓶子时使用分页以避免消息过长')
-        .default(false)
-    }),
-    Schema.union([
-      Schema.object({
-        usePage: Schema.const(true).required(),
-        commentLimit: Schema.number().description("捞漂流瓶时一页显示多少个评论").required(),
-        bottleLimit: Schema.number().description("查看我的/精选瓶子或通过名字捞漂流瓶时一页显示多少个瓶子").required(),
-      }),
-      Schema.object({
-        usePage: Schema.const(false),
-      })
-    ])
-  ]),
+  Schema.object({
+    commentLimit: Schema.number()
+      .description("捞漂流瓶时一页显示多少个评论 (0为不分页)")
+      .default(0),
+    bottleLimit: Schema.number()
+      .description("查看我的/用户瓶子时一页显示多少个瓶子 (0为不分页)")
+      .default(0),
+    hotBottleLimit: Schema.number()
+      .description("查看精选瓶子时一页显示多少个瓶子 (0为不分页)")
+      .default(0),
+    nameBottleLimit: Schema.number()
+      .description("通过名字捞漂流瓶时一页显示多少个瓶子 (0为不分页)")
+      .default(0),
+    indexLimit: Schema.number()
+      .description("瓶子黄页一页显示多少个瓶子 (0为不分页)")
+      .default(0),
+  }).description("分页设置"),
+
   Schema.intersect([
     Schema.object({
       randomSend: Schema.boolean()
         .description('是否会随机时刻在随机群发送随机漂流瓶')
         .default(false),
-    }),
+    }).description("随机发送设置"),
     Schema.union([
       Schema.object({
         randomSend: Schema.const(true).required(),
@@ -155,10 +168,14 @@ export const Config: Schema<Config> = Schema.intersect([
         randomSend: Schema.const(false),
       })
     ])
-  ])
+  ]),
 ])
 
-export const inject = ["database", "notifier"]
+export const inject = {
+    require: ["database", "notifier"],
+    optional: ["puppeteer"]
+  }
+
 
 export async function apply(ctx: Context, config: Config) {
   const notifier = ctx.notifier.create()
@@ -492,8 +509,8 @@ export async function apply(ctx: Context, config: Config) {
             .select('bottle')
             .where({name: {$regex: new RegExp(bottleId)}})
             .orderBy('id', 'asc')
-            .limit(config.usePage ? config.bottleLimit : Infinity)
-            .offset(config.usePage ? ((page ?? 1) - 1) * config.bottleLimit : 0)
+            .limit(config.bottleLimit !== 0 ? config.bottleLimit : Infinity)
+            .offset(config.bottleLimit !== 0 ? ((page ?? 1) - 1) * config.bottleLimit : 0)
             .execute()
         } else {
           bottles = await ctx.database.get("bottle", {id: +bottleId})
@@ -505,7 +522,7 @@ export async function apply(ctx: Context, config: Config) {
           return h.text(`发送“捞漂流瓶 <编号>”捞取指定瓶子
 发送“捞漂流瓶 ${bottleId} <分页>”切换分页
 请选择你要捞的瓶子（编号：标题）\n${bottles.map((bottle) => `${bottle.id}：${bottle.name}`).join("\n")}
-${config.usePage ? `\n第${page ?? 1}/${Math.ceil(bottlesLength / config.bottleLimit)}页` : ""}`)
+${config.bottleLimit !== 0 ? `\n第${page ?? 1}/${Math.ceil(bottlesLength / config.bottleLimit)}页` : ""}`)
         }
       }
       let retry = 0
@@ -517,8 +534,8 @@ ${config.usePage ? `\n第${page ?? 1}/${Math.ceil(bottlesLength / config.bottleL
           .select('comment')
           .where({ bid: id })
           .orderBy('cid', 'asc')
-          .limit(config.usePage ? config.commentLimit : Infinity)
-          .offset(config.usePage ? ((page ?? 1) - 1) * config.commentLimit : 0)
+          .limit(config.commentLimit !== 0 ? config.commentLimit : Infinity)
+          .offset(config.commentLimit !== 0 ? ((page ?? 1) - 1) * config.commentLimit : 0)
           .execute()
         const chain = [];
         let bottleTime = new Date(time * 86400000);
@@ -563,7 +580,7 @@ ${config.usePage ? `\n第${page ?? 1}/${Math.ceil(bottlesLength / config.bottleL
           }
           
         }
-        if (config.usePage && comments.length > 0) result += (`\n第${page ?? 1}/${Math.ceil(commentsLength / config.commentLimit)}页`)
+        if (config.commentLimit !== 0 && comments.length > 0) result += (`\n第${page ?? 1}/${Math.ceil(commentsLength / config.commentLimit)}页`)
         try {
           await session.bot.sendMessage(session.event.channel.id, result);
           if (chain[1].text.includes("<audio") || chain[1].text.includes("<video")) {
@@ -594,7 +611,7 @@ ${config.usePage ? `\n第${page ?? 1}/${Math.ceil(bottlesLength / config.bottleL
       .usage('回复评论时，注意-r与评论编号间有空格，且该参数不能放到最后')
       .option('rid', '-r <rid: integer> 回复评论', { fallback: 0 })
       .example('评论瓶子 [-r <评论编号>] <瓶子编号> <内容>，[]内为可选参数，加上后代表要回复评论而不是评论瓶子')
-      .action(async ({ session, options }, id, ct) => {
+      .action(async ({ session, options, root }, id, ct) => {
         const bottle = (await ctx.database.get('bottle', { id: id }))[0];
         if (!bottle) return '你要评论的瓶子不存在！';
         let replyId, comment;
@@ -604,9 +621,15 @@ ${config.usePage ? `\n第${page ?? 1}/${Math.ceil(bottlesLength / config.bottleL
           comment = (await ctx.database.get('comment', { bid: id, cid: replyId }))[0];
           if (!comment) return '你要回复的评论不存在！';
         }
+
         const quote = session.event.message.quote
         if (!ct && !quote) return '请输入内容或引用回复一条消息';
-        let uid = quote?.user.id ?? session.event.user.id;
+        let uid: string
+        if (root) {
+          uid = quote?.user.id ?? session.event.user.id;
+        } else {
+          uid = session.event.user.id;
+        }
         let gid = session.event?.guild?.id;
         let cnid = session.event?.channel?.id;
         const { uid: buid, gid: bgid, cnid: bcnid } = bottle;
@@ -807,8 +830,8 @@ ${config.usePage ? `\n第${page ?? 1}/${Math.ceil(bottlesLength / config.bottleL
         const bottles = await ctx.database
           .select("bottle")
           .where({ uid: session.event.user.id })
-          .limit(!config.usePage || options.list ? Infinity : config.bottleLimit)
-          .offset(!config.usePage || options.list ? 0 : ((page ?? 1) - 1) * config.bottleLimit)
+          .limit(config.bottleLimit === 0 || options.list ? Infinity : config.bottleLimit)
+          .offset(config.bottleLimit === 0 || options.list ? 0 : ((page ?? 1) - 1) * config.bottleLimit)
           .execute()
         if (!bottles || bottles.length < 1) return '你还没有扔过瓶子！';
         const chain = [];
@@ -820,7 +843,7 @@ ${config.usePage ? `\n第${page ?? 1}/${Math.ceil(bottlesLength / config.bottleL
             const { content, id, name } = bottle;
             chain.push(`瓶子编号${id}${name ? `(${name})` : ""}：${content.includes("<audio") ? "[语音]" : content.includes("<video") ? "[视频]" : content}`);
           }
-          if (config.usePage) chain.push(`\n第${page ?? 1}/${Math.ceil(bottlesLength / config.bottleLimit)}页`);
+          if (config.bottleLimit !== 0) chain.push(`\n第${page ?? 1}/${Math.ceil(bottlesLength / config.bottleLimit)}页`);
         }
         return chain.join('\n');
       })
@@ -1004,8 +1027,8 @@ ${config.usePage ? `\n第${page ?? 1}/${Math.ceil(bottlesLength / config.bottleL
             const bottles = await ctx.database
               .select("bottle")
               .where({ uid: id })
-              .limit(!config.usePage || options.list ? Infinity : config.bottleLimit)
-              .offset(!config.usePage || options.list ? 0 : ((page ?? 1) - 1) * config.bottleLimit)
+              .limit(config.bottleLimit === 0 || options.list ? Infinity : config.bottleLimit)
+              .offset(config.bottleLimit === 0 || options.list ? 0 : ((page ?? 1) - 1) * config.bottleLimit)
               .execute()
             if (!bottles || bottles.length < 1) return '该用户还没有扔过瓶子！';
             const chain = [];
@@ -1017,7 +1040,7 @@ ${config.usePage ? `\n第${page ?? 1}/${Math.ceil(bottlesLength / config.bottleL
                 const { content, id, name } = bottle;
                 chain.push(`瓶子编号${id}${name ? `(${name})` : ""}：${content.includes("<audio") ? "[语音]" : content.includes("<video") ? "[视频]" : content}`);
               }
-              if (config.usePage) chain.push(`\n第${page ?? 1}/${Math.ceil(bottlesLength / config.bottleLimit)}页`);
+              if (config.bottleLimit !== 0) chain.push(`\n第${page ?? 1}/${Math.ceil(bottlesLength / config.bottleLimit)}页`);
             }
             return chain.join('\n');
           } else {
@@ -1163,7 +1186,7 @@ ${bottleFatal.length > 0 || commentFatal.length > 0 ? `请查看日志！` : ""}
         return `命名成功！`
       })
 
-    ctx.command("漂流瓶.瓶子黄页 <page:posint>")
+    ctx.command("漂流瓶.瓶子黄页 [page:posint]")
       .alias("瓶子黄页")
       .action(async ({session}, page) => {
         let bottlesLength = (await ctx.database.get("bottle", {})).length
@@ -1171,29 +1194,118 @@ ${bottleFatal.length > 0 || commentFatal.length > 0 ? `请查看日志！` : ""}
           .select('bottle')
           .where({})
           .orderBy('id', 'asc')
-          .limit(100)
-          .offset(((page ?? 1) - 1) * 100)
+          .limit(config.indexLimit !== 0 ? config.indexLimit : Infinity)
+          .offset(config.indexLimit !== 0 ? ((page ?? 1) - 1) * config.indexLimit : 0)
           .execute()
 
-        return `使用“漂流瓶.瓶子黄页 分页”切换分页\n编号：标题\n${bottles.map((bottle) => `${bottle.id}：${bottle.name}`).join("\n")}
-\n第${page ?? 1}/${Math.ceil(bottlesLength / 10)}页`
+        if (config.indexToImage) {
+          if (!ctx.puppeteer) {
+            ctx.logger("re-driftbottle").warn("puppeteer 未加载")
+            return `使用“漂流瓶.瓶子黄页 分页”切换分页\n编号：标题\n${bottles.map((bottle) => `${bottle.id}${bottle.name ? ` (${bottle.name})` : ""}`).join("\n")}
+\n第${page ?? 1}/${Math.ceil(bottlesLength / config.indexLimit)}页`
+          }
+
+          let bottlesTable = {
+            col1: [],
+            col2: [],
+            col3: [],
+          }
+
+          for (let i = 0; i < bottles.length; i += 3) {
+            bottlesTable.col1.push(`
+              <tr>
+              <td>${bottles[i].id}</td>
+              <td>${bottles[i].name ? bottles[i].name : "无标题"}</td>
+              </tr>`)
+
+            if (bottles[i + 1]) {
+              bottlesTable.col2.push(`
+                <tr>
+                <td>${bottles[i + 1].id}</td>
+                <td>${bottles[i + 1].name ? bottles[i + 1].name : "无标题"}</td>
+                </tr>`)
+            } else {
+              bottlesTable.col2.push(`
+                <tr>
+                <td>-</td>
+                <td>-</td>
+                </tr>`)
+            }
+
+            if (bottles[i + 2]) {
+              bottlesTable.col3.push(`
+                <tr>
+                <td>${bottles[i + 2].id}</td>
+                <td>${bottles[i + 2].name ? bottles[i + 2].name : "无标题"}</td>
+                </tr>`)
+            } else {
+              bottlesTable.col3.push(`
+                <tr>
+                <td>-</td>
+                <td>-</td>
+                </tr>`)
+            }
+          }
+
+          return await ctx.puppeteer.render(
+            `<html style="width: fit-content; max-width: 50%">
+              <head>
+                <style>
+                  table {
+                    margin: 10px;
+                    display: inline-block;
+                  }
+                </style>
+              </head>
+            
+              <body style="height: fit-content;">
+                <table>
+                  <tr>
+                    <th>编号</th>
+                    <th>标题</th>
+                  </tr>
+                  ${bottlesTable.col1.join("\n")}
+                </table>
+
+                <table>
+                  <tr>
+                    <th>编号</th>
+                    <th>标题</th>
+                  </tr>
+                  ${bottlesTable.col2.join("\n")}
+                </table>
+
+                <table>
+                  <tr>
+                    <th>编号</th>
+                    <th>标题</th>
+                  </tr>
+                  ${bottlesTable.col3.join("\n")}
+                </table>
+              </body>
+            </html>`
+            )
+        } else {
+          return `使用“漂流瓶.瓶子黄页 分页”切换分页\n编号：标题\n${bottles.map((bottle) => `${bottle.id}${bottle.name ? ` (${bottle.name})` : ""}`).join("\n")}
+\n第${page ?? 1}/${Math.ceil(bottlesLength / config.indexLimit)}页`
+        }
       })
 
-    ctx.command("漂流瓶.精选瓶子 <page:posint>")
+    ctx.command("漂流瓶.精选瓶子 [page:posint]")
       .alias("精选瓶子")
       .action(async ({session}, page) => {
-        let bottlesLength = (await ctx.database.get("bottle", {isHot: 1})).length
+        let bottlesLength = (await ctx.database.get("bottle", {$or: [{isHot: 1}, {commentCount: {$gte: config.hotThresholdValue}}]})).length
 
         let bottles = await ctx.database
           .select('bottle')
           .where({$or: [{isHot: 1}, {commentCount: {$gte: config.hotThresholdValue}}]})
           .orderBy('id', 'asc')
-          .limit(config.bottleLimit)
-          .offset(((page ?? 1) - 1) * config.bottleLimit)
+          .limit(config.hotBottleLimit !== 0 ? config.hotBottleLimit : Infinity)
+          .offset(config.hotBottleLimit !== 0 ? ((page ?? 1) - 1) * config.hotBottleLimit : 0)
           .execute()
 
         return `使用“漂流瓶.精选瓶子 分页”切换分页\n编号：标题\n${bottles.map((bottle) => `${bottle.id} (${bottle.isHot ? "管理员精选" : `评论数 ${bottle.commentCount}`})：${bottle.name}`).join("\n")}
-\n第${page ?? 1}/${Math.ceil(bottlesLength / config.bottleLimit)}页`
+\n第${page ?? 1}/${Math.ceil(bottlesLength / config.hotBottleLimit)}页`
       })
 
     ctx.command("漂流瓶.设置精选瓶子 <id:posint>")
