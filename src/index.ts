@@ -172,7 +172,7 @@ export const Config: Schema<Config> = Schema.intersect([
 ])
 
 export const inject = {
-    require: ["database", "notifier"],
+    required: ["database", "notifier"],
     optional: ["puppeteer"]
   }
 
@@ -1215,14 +1215,14 @@ ${bottleFatal.length > 0 || commentFatal.length > 0 ? `请查看日志！` : ""}
             bottlesTable.col1.push(`
               <tr>
               <td>${bottles[i].id}</td>
-              <td>${bottles[i].name ? bottles[i].name : "无标题"}</td>
+              <td>${bottles[i].name ? bottles[i].name : ""}</td>
               </tr>`)
 
             if (bottles[i + 1]) {
               bottlesTable.col2.push(`
                 <tr>
                 <td>${bottles[i + 1].id}</td>
-                <td>${bottles[i + 1].name ? bottles[i + 1].name : "无标题"}</td>
+                <td>${bottles[i + 1].name ? bottles[i + 1].name : ""}</td>
                 </tr>`)
             } else {
               bottlesTable.col2.push(`
@@ -1236,7 +1236,7 @@ ${bottleFatal.length > 0 || commentFatal.length > 0 ? `请查看日志！` : ""}
               bottlesTable.col3.push(`
                 <tr>
                 <td>${bottles[i + 2].id}</td>
-                <td>${bottles[i + 2].name ? bottles[i + 2].name : "无标题"}</td>
+                <td>${bottles[i + 2].name ? bottles[i + 2].name : ""}</td>
                 </tr>`)
             } else {
               bottlesTable.col3.push(`
@@ -1247,6 +1247,7 @@ ${bottleFatal.length > 0 || commentFatal.length > 0 ? `请查看日志！` : ""}
             }
           }
 
+          if (!page) await session.send(`使用“漂流瓶.瓶子黄页 分页”切换分页`)
           return await ctx.puppeteer.render(
             `<html style="width: fit-content; max-width: 50%">
               <head>
@@ -1260,27 +1261,33 @@ ${bottleFatal.length > 0 || commentFatal.length > 0 ? `请查看日志！` : ""}
             
               <body style="height: fit-content;">
                 <table>
-                  <tr>
-                    <th>编号</th>
-                    <th>标题</th>
-                  </tr>
-                  ${bottlesTable.col1.join("\n")}
+                  <tbody align="center" valign="center">
+                    <tr>
+                      <th>编号</th>
+                      <th>标题</th>
+                    </tr>
+                    ${bottlesTable.col1.join("\n")}
+                  </tbody>
                 </table>
 
                 <table>
-                  <tr>
-                    <th>编号</th>
-                    <th>标题</th>
-                  </tr>
-                  ${bottlesTable.col2.join("\n")}
+                  <tbody align="center" valign="center">
+                    <tr>
+                      <th>编号</th>
+                      <th>标题</th>
+                    </tr>
+                    ${bottlesTable.col2.join("\n")}
+                  </tbody>
                 </table>
 
                 <table>
-                  <tr>
-                    <th>编号</th>
-                    <th>标题</th>
-                  </tr>
-                  ${bottlesTable.col3.join("\n")}
+                  <tbody align="center" valign="center">
+                    <tr>
+                      <th>编号</th>
+                      <th>标题</th>
+                    </tr>
+                    ${bottlesTable.col3.join("\n")}
+                  </tbody>
                 </table>
               </body>
             </html>`
