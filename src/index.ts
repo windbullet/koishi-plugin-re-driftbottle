@@ -17,7 +17,8 @@ const pipelineAsync = promisify(pipeline)
 export const name = 're-driftbottle'
 
 export const usage = `本插件翻新自https://www.npmjs.com/package/koishi-plugin-driftbottle  
-原插件因长期未维护已无法正常工作`
+原插件因长期未维护已无法正常工作  
+更新日志：https://forum.koishi.xyz/t/topic/5747`
 
 export interface Bottle {
   id: number;
@@ -1247,7 +1248,6 @@ ${bottleFatal.length > 0 || commentFatal.length > 0 ? `请查看日志！` : ""}
             }
           }
 
-          if (!page) await session.send(`使用“漂流瓶.瓶子黄页 分页”切换分页`)
           return await ctx.puppeteer.render(
             `<html style="width: fit-content; max-width: 50%">
               <head>
@@ -1289,6 +1289,8 @@ ${bottleFatal.length > 0 || commentFatal.length > 0 ? `请查看日志！` : ""}
                     ${bottlesTable.col3.join("\n")}
                   </tbody>
                 </table>
+                <p align="center" style="margin: 0px;">使用“漂流瓶.瓶子黄页 分页”切换分页</p>
+                <p align="center" style="margin: 5px;">第${page ?? 1}/${Math.ceil(bottlesLength / config.indexLimit)}页</p>
               </body>
             </html>`
             )
