@@ -609,7 +609,7 @@ ${config.bottleLimit !== 0 ? `\n第${page ?? 1}/${Math.ceil(bottlesLength / conf
 
     ctx.command('漂流瓶.评论瓶子 <id:posint> [ct:text]', {
       checkArgCount: true,
-      captureQuote: true
+      captureQuote: false
     })
       .alias('评论瓶子')
       .usage('回复评论时，注意-r与评论编号间有空格，且该参数不能放到最后')
