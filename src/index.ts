@@ -6,7 +6,7 @@ import { pathToFileURL } from "url"
 import { resolve } from 'path'
 import { promisify } from 'util'
 import { pipeline, Readable } from 'stream'
-import { createWriteStream } from 'fs'
+import { createWriteStream, unlinkSync } from 'fs'
 import mimedb from "mime-db" 
 import {} from "@koishijs/plugin-help"
 import {} from "@koishijs/plugin-notifier"
@@ -657,20 +657,29 @@ ${config.bottleLimit !== 0 ? `\n第${page ?? 1}/${Math.ceil(bottlesLength / conf
                 for await (let i of guildList) {
                   if (i.id === bgid || i.id === bcnid) {
                     try {
-                      if (bcnid.length === 0) throw new Error('bcnid is empty');
-                      await bot.sendMessage(bcnid, h("at", {id: buid}) + ` 你的${id}号瓶子有新评论！\n\n${ct}\n\n发送【捞漂流瓶 ${id}】查看详情`)
+                      try {
+                        if (bcnid.length === 0) throw new Error('bcnid is empty');
+                        await bot.sendMessage(bcnid, h("at", {id: buid}) + ` 你的${id}号瓶子有新评论！\n\n${ct}\n\n发送【捞漂流瓶 ${id}】查看详情`)
+                      } catch (e) {
+                        await bot.sendMessage(bgid, h("at", {id: buid}) + ` 你的${id}号瓶子有新评论！\n\n${ct}\n\n发送【捞漂流瓶 ${id}】查看详情`)
+                      }
                     } catch (e) {
-                      await bot.sendMessage(bgid, h("at", {id: buid}) + ` 你的${id}号瓶子有新评论！\n\n${ct}\n\n发送【捞漂流瓶 ${id}】查看详情`)
+                      await session.send("评论提醒发送失败")
                     }
+
                     flag = false
                     break
                   }
                 }
                 if (flag) {
                   for await (let i of friendList) {
-                    if (i.id === bcnid.replace("private:", "")) {
-                      await bot.sendMessage(bcnid, ` 你的${id}号瓶子有新评论！\n\n${ct}\n\n发送【捞漂流瓶 ${id}】查看详情`)
-                      break
+                    try {
+                      if (i.id === bcnid.replace("private:", "")) {
+                        await bot.sendMessage(bcnid, ` 你的${id}号瓶子有新评论！\n\n${ct}\n\n发送【捞漂流瓶 ${id}】查看详情`)
+                        break
+                      }
+                    } catch (e) {
+                      await session.send("评论提醒发送失败")
                     }
                   }
                 }
@@ -684,10 +693,14 @@ ${config.bottleLimit !== 0 ? `\n第${page ?? 1}/${Math.ceil(bottlesLength / conf
                     const atUser = h("at", {id: cuid});
                     const message = `${atUser} ${id}号瓶子中你的${replyId}号评论有新回复！\n\n${ct}\n\n发送【捞漂流瓶 ${id}】查看详情`;
                     try {
-                      if (ccnid.length === 0) throw new Error('ccnid is empty');
-                      await bot.sendMessage(ccnid, message)
+                      try {
+                        if (ccnid.length === 0) throw new Error('ccnid is empty');
+                        await bot.sendMessage(ccnid, message)
+                      } catch (e) {
+                        await bot.sendMessage(cgid, message);
+                      }
                     } catch (e) {
-                      await bot.sendMessage(cgid, message);
+                      await session.send("评论提醒发送失败")
                     }
                     flag = false
                     break;
@@ -695,9 +708,13 @@ ${config.bottleLimit !== 0 ? `\n第${page ?? 1}/${Math.ceil(bottlesLength / conf
                 }
                 if (flag) {
                   for await (let i of friendList) {
-                    if (i.id === ccnid.replace("private:", "")) {
-                      await bot.sendMessage(bcnid, ` ${id}号瓶子中你的${replyId}号评论有新回复！\n\n${ct}\n\n发送【捞漂流瓶 ${id}】查看详情`)
-                      break
+                    try {
+                      if (i.id === ccnid.replace("private:", "")) {
+                        await bot.sendMessage(bcnid, ` ${id}号瓶子中你的${replyId}号评论有新回复！\n\n${ct}\n\n发送【捞漂流瓶 ${id}】查看详情`)
+                        break
+                      }
+                    } catch (e) {
+                      await session.send("评论提醒发送失败")
                     }
                   }
                 }
@@ -730,7 +747,7 @@ ${config.bottleLimit !== 0 ? `\n第${page ?? 1}/${Math.ceil(bottlesLength / conf
                   let response = await ctx.http("get", element.attrs.src, {responseType: "stream"})
                   let responseStream = Readable.from(response.data)
                   let ext = mimedb[response.headers.get("content-type")]?.extensions?.[0]
-                  let path = resolve(config.path, `bottle-${preview.id}-${index}.${ext}`)
+                  let path = resolve(config.path, `comment-${preview.id}-${index}.${ext}`)
                   let writer = createWriteStream(path)
                   await pipelineAsync(responseStream, writer)
                   element.attrs.src = pathToFileURL(path).href
@@ -807,6 +824,18 @@ ${config.bottleLimit !== 0 ? `\n第${page ?? 1}/${Math.ceil(bottlesLength / conf
             return '你要删除的瓶子不存在！';
         if (!config.manager.includes(session.event.user.id) && session.event.user.id !== bottle.uid)
             return '你没有权限删除别人的瓶子！';
+        for (let element of h.parse(bottle.content)) {
+          if (["img", "audio", "video"].includes(element.type) && element.attrs.src.startsWith("file")) {
+            unlinkSync(element.attrs.src.slice(8))
+          }
+        }
+        for (let comment of await ctx.database.get("comment", { bid: id })) {
+          for (let element of h.parse(comment.content)) {
+            if (["img", "audio", "video"].includes(element.type) && element.attrs.src.startsWith("file")) {
+              unlinkSync(element.attrs.src.slice(8))
+            }
+          }
+        }
         await ctx.database.remove('bottle', { id: id });
         await ctx.database.remove('comment', { bid: id });
         return '瓶子删除了！';
@@ -821,6 +850,11 @@ ${config.bottleLimit !== 0 ? `\n第${page ?? 1}/${Math.ceil(bottlesLength / conf
           return '你要删除的评论不存在！';
         if (!config.manager.includes(session.event.user.id) && session.event.user.id !== comment.uid)
           return '你没有权限删除别人的评论！';
+        for (let element of h.parse(comment.content)) {
+          if (["img", "audio", "video"].includes(element.type) && element.attrs.src.startsWith("file")) {
+            unlinkSync(element.attrs.src.slice(8))
+          }
+        }
         await ctx.database.remove('comment', { bid: bid, cid: cid });
         return '评论删除了！';
       });
