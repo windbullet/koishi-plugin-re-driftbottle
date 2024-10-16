@@ -393,8 +393,6 @@ export async function apply(ctx: Context, config: Config) {
 
       content = config.allowPic ? content : content.replace(/<.*?>/g, '')
 
-      if (content.length > config.maxLength)
-        return '内容过长！'
       if (content.length < 1)
         return '内容过短！'
 
@@ -429,9 +427,7 @@ export async function apply(ctx: Context, config: Config) {
             }))
             
             if (flag) {
-              await ctx.database.set("bottle", {id: preview.id}, {
-                content: elements.join("")
-              })
+              content = elements.join("")
             }
             
             break
@@ -454,8 +450,14 @@ export async function apply(ctx: Context, config: Config) {
             continue  
           }
         }
-
       }
+      
+      if (content.length > config.maxLength)
+        return '内容过长！'
+      
+      await ctx.database.set("bottle", { id: preview.id }, {
+        content
+      })
       
       if (config.preview) {
         let retry = 0
