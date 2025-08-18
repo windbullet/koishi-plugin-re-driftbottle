@@ -2,12 +2,12 @@
 // Copyright haku530 2023
 
 import { Context, Schema, Time, Random, h, Logger, Dict } from 'koishi'
-import { pathToFileURL } from "url"
+import { pathToFileURL, fileURLToPath } from "url"
 import { resolve } from 'path'
 import { promisify } from 'util'
 import { pipeline, Readable } from 'stream'
-import { createWriteStream, unlinkSync } from 'fs'
-import mimedb from "mime-db" 
+import { createWriteStream, unlinkSync, readFileSync, writeFileSync } from 'fs'
+import mime from "mime-types" 
 import {} from "@koishijs/plugin-help"
 import {} from "@koishijs/plugin-notifier"
 import {} from "koishi-plugin-puppeteer"
@@ -46,6 +46,7 @@ export interface Comment {
 
 export interface Config {
   manager: string[];
+  messageRecord: boolean;
   allowPic: boolean;
   allowDropOthers: boolean;
   selfDrop: boolean;
@@ -57,7 +58,7 @@ export interface Config {
   hotThresholdValue: number;
   maxLength: number;
   path: string;
-  localSource: boolean
+  saveMode: 'url' | 'base64' | 'file';
   indexToImage: boolean;
   commentLimit: number;
   bottleLimit: number;
@@ -106,14 +107,18 @@ export const Config: Schema<Config> = Schema.intersect([
     selfDrop: Schema.boolean()
       .description('扔别人的消息时是否算作自己扔的')
       .default(false),
-    localSource: Schema.boolean()
-      .default(false)
-      .description('是否本地储存漂流瓶中的静态资源'),
+    saveMode: Schema.union([
+      Schema.const("url").description('储存URL（可能会过期）'),
+      Schema.const("base64").description("储存base64编码（无本地文件）"),
+      Schema.const("file").description("储存文件至本地"),
+    ])
+      .default("base64")
+      .description('扔漂流瓶时静态资源的默认储存方式'),
     path: Schema.path({
       filters: ["directory"],
       allowCreate: true
     })
-      .description("漂流瓶静态资源本地储存路径")
+      .description("漂流瓶静态资源文件本地储存路径")
       .required(),
   }).description("漂流瓶设置"),
 
@@ -130,6 +135,9 @@ export const Config: Schema<Config> = Schema.intersect([
     indexToImage: Schema.boolean()
       .description('是否将瓶子黄页转换为图片发送（需要 puppeteer 服务）')
       .default(false),
+    messageRecord: Schema.boolean()
+      .description('以聊天记录形式发送漂流瓶')
+      .default(true),
   }).description("显示设置"),
 
   Schema.object({
@@ -179,6 +187,7 @@ export const inject = {
 
 
 export async function apply(ctx: Context, config: Config) {
+  const bottleMap = new Map<string, number>()
   const notifier = ctx.notifier.create()
   await extendTables(ctx)
 
@@ -406,7 +415,7 @@ export async function apply(ctx: Context, config: Config) {
         time: Time.getDateNumber()
       });
 
-      if (config.localSource) {
+      if (config.saveMode === 'file') {
         let retry = 0
         while (true) {
           try {
@@ -417,11 +426,52 @@ export async function apply(ctx: Context, config: Config) {
                 flag = true
                 let response = await ctx.http("get", element.attrs.src, {responseType: "stream"})
                 let responseStream = Readable.from(response.data)
-                let ext = mimedb[response.headers.get("content-type")]?.extensions?.[0]
+                let ext = mime.extension(response.headers.get("content-type"))
                 let path = resolve(config.path, `bottle-${preview.id}-${index}.${ext}`)
                 let writer = createWriteStream(path)
                 await pipelineAsync(responseStream, writer)
                 element.attrs.src = pathToFileURL(path).href
+              }
+              return element
+            }))
+            
+            if (flag) {
+              content = elements.join("")
+            }
+            
+            break
+          } catch (e) {
+            retry++
+            let logger = new Logger('re-driftbottle')
+            if (retry > config.maxRetry) {
+              logger.warn(`${ preview.id }号漂流瓶资源储存失败（已重试${ config.maxRetry }次）：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
+              await session.send("这个漂流瓶中的静态资源无法储存，请查看日志！\n你可以尝试以下方法：\n保存图片后使用指令“扔漂流瓶 [图片]”（如果你要扔的是图片的话）\n缩短漂流瓶长度\n稍后重试\n联系开发者")
+              await ctx.database.remove('bottle', { id: preview.id })
+              logger.info(`${ preview.id }号漂流瓶已被删除`)
+              return
+            }
+            logger.warn(`${ preview.id }号漂流瓶资源储存失败（已重试${retry-1}/${config.maxRetry}次，将在${config.retryInterval}ms后重试：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
+            try {
+              await ctx.sleep(config.retryInterval)
+            } catch {
+              return
+            }
+            continue  
+          }
+        }
+      } else if (config.saveMode === 'base64') {
+        let retry = 0
+        while (true) {
+          try {
+            let flag = false
+            let elements = h.parse(content)
+            elements = await Promise.all(elements.map(async (element, index) => {
+              if (["img", "audio", "video"].includes(element.type) && !element.attrs.src.startsWith("file") && !element.attrs.src.startsWith("data")) {
+                flag = true
+                let response = await ctx.http("get", element.attrs.src, {responseType: "arraybuffer"})
+                let base64 = Buffer.from(response.data).toString('base64');
+                let mimeType = response.headers.get("content-type")
+                element.attrs.src = `data:${mimeType};base64,${base64}`
               }
               return element
             }))
@@ -568,26 +618,78 @@ ${config.bottleLimit !== 0 ? `\n第${page ?? 1}/${Math.ceil(bottlesLength / conf
           result += chain[0].text + '\n' + `内容：\n${chain[1].text}`;
         }
 
-        
+        let com = ""
         if (comments.length > 0) {
           if (chain[1].text.includes("<audio") || chain[1].text.includes("<video")) {
-            result2 += "\n\n" + chain[2].text + "\n"
+            com += "\n\n" + chain[2].text + "\n"
             for (let i of chain.slice(3)) {
-              result2 += i.id + i.username + "：" + i.text + "\n"
+              com += i.id + i.username + "：" + i.text + "\n"
             }
+            result2 += com
           } else {
-            result += "\n\n" + chain[2].text + "\n"
+            com += "\n\n" + chain[2].text + "\n"
             for (let i of chain.slice(3)) {
-              result += i.id + i.username + "：" + i.text + "\n"
+              com += i.id + i.username + "：" + i.text + "\n"
             }
+            result += com
           }
           
         }
+
         if (config.commentLimit !== 0 && comments.length > 0) result += (`\n第${page ?? 1}/${Math.ceil(commentsLength / config.commentLimit)}页`)
         try {
-          await session.bot.sendMessage(session.event.channel.id, result);
-          if (chain[1].text.includes("<audio") || chain[1].text.includes("<video")) {
-            await session.bot.sendMessage(session.event.channel.id, result2);
+          if (config.messageRecord) {
+            if (comments.length > 0) {
+              let commentInfo = []
+              for (const comment of comments) {
+                const { username: commentName, content: commentContent, uid: commentUid} = comment;
+                commentInfo.push({
+                  commentName,
+                  commentContent: commentContent.slice(1, -1),
+                  commentUid
+                });
+              }
+              bottleMap.set((await session.bot.sendMessage(session.event.channel.id, 
+                <message forward>
+                  <message>
+                    <author id={session.selfId} name={session.bot.user.name}/>
+                    {chain[0].text}
+                  </message>
+                  <message>
+                    <author id={chain[1].id} name={chain[1].username}/>
+                    {h.parse(chain[1].text)}
+                  </message>
+                  <message>
+                    <author id={session.selfId} name={session.bot.user.name}/>
+                    ↓----评论区----↓
+                  </message>
+                  {commentInfo.map((comment) => (
+                    <message>
+                      <author id={comment.commentUid} name={comment.commentName}/>
+                      {h.parse(comment.commentContent)}
+                    </message>
+                  ))}
+                </message>
+              ))[0], bottle.id)
+            } else {
+              bottleMap.set((await session.bot.sendMessage(session.event.channel.id, 
+                <message forward>
+                  <message>
+                    <author id={session.selfId} name={session.bot.user.name}/>
+                    {chain[0].text}
+                  </message>
+                  <message>
+                  <author id={chain[1].id} name={chain[1].username}/>
+                    {h.parse(chain[1].text)}
+                  </message>
+                </message>
+              ))[0], bottle.id)
+            }
+          } else {
+            bottleMap.set((await session.bot.sendMessage(session.event.channel.id, result))[0], bottle.id);
+            if (chain[1].text.includes("<audio") || chain[1].text.includes("<video")) {
+              bottleMap.set((await session.bot.sendMessage(session.event.channel.id, result2))[0], bottle.id);
+            }
           }
           break
         } catch (e) {
@@ -737,7 +839,7 @@ ${config.bottleLimit !== 0 ? `\n第${page ?? 1}/${Math.ceil(bottlesLength / conf
           time: Time.getDateNumber() 
         });
 
-        if (config.localSource) {
+        if (config.saveMode === "file") {
           let retry = 0
           while (true) {
             try {
@@ -748,7 +850,7 @@ ${config.bottleLimit !== 0 ? `\n第${page ?? 1}/${Math.ceil(bottlesLength / conf
                   flag = true
                   let response = await ctx.http("get", element.attrs.src, {responseType: "stream"})
                   let responseStream = Readable.from(response.data)
-                  let ext = mimedb[response.headers.get("content-type")]?.extensions?.[0]
+                  let ext = mime.extension(response.headers.get("content-type"))
                   let path = resolve(config.path, `comment-${preview.id}-${index}.${ext}`)
                   let writer = createWriteStream(path)
                   await pipelineAsync(responseStream, writer)
@@ -783,7 +885,49 @@ ${config.bottleLimit !== 0 ? `\n第${page ?? 1}/${Math.ceil(bottlesLength / conf
               continue  
             }
           }
-  
+        } else if (config.saveMode === "base64") {
+          let retry = 0
+          while (true) {
+            try {
+              let flag = false
+              let elements = h.parse(ct)
+              elements = await Promise.all(elements.map(async (element, index) => {
+                if (["img", "audio", "video"].includes(element.type) && !element.attrs.src.startsWith("file") && !element.attrs.src.startsWith("data")) {
+                  flag = true
+                  let response = await ctx.http("get", element.attrs.src, {responseType: "arraybuffer"})
+                  let base64 = Buffer.from(response.data).toString("base64")
+                  let mimeType = response.headers.get("content-type")
+                  element.attrs.src = `data:${mimeType};base64,${base64}`
+                }
+                return element
+              }))
+              
+              if (flag) {
+                await ctx.database.set("comment", {id: preview.id}, {
+                  content: elements.join("")
+                })
+              }
+              
+              break
+            } catch (e) {
+              retry++
+              let logger = new Logger('re-driftbottle')
+              if (retry > config.maxRetry) {
+                logger.warn(`${id}号漂流瓶中的${cid}号评论资源储存失败（已重试${ config.maxRetry }次）：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
+                await session.send("这个评论中的静态资源无法储存，请查看日志！\n你可以尝试以下方法：\n保存图片后使用指令（如果你要扔的是图片的话）\n缩短漂流瓶长度\n稍后重试\n联系开发者")
+                await ctx.database.remove('comment', { id: preview.id })
+                logger.info(`${id}号漂流瓶中的${cid}号评论已被删除`)
+                return
+              }
+              logger.warn(`${id}号漂流瓶中的${cid}号评论资源储存失败（已重试${retry-1}/${config.maxRetry}次，将在${config.retryInterval}ms后重试：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
+              try {
+                await ctx.sleep(config.retryInterval)
+              } catch {
+                return
+              }
+              continue  
+            }
+          }
         }
 
         if (config.preview) {
@@ -1095,12 +1239,11 @@ ${config.bottleLimit !== 0 ? `\n第${page ?? 1}/${Math.ceil(bottlesLength / conf
     ctx.middleware(async (session, next) => {
       if (session?.quote?.user?.id !== session.selfId) {
         return next()
-      } else if (!/^你捞到了(\d+)号漂流瓶，来自“(.*)”！/.test(session.quote.content)) {
+      } else if (!bottleMap.has(session?.quote?.id)) {
         return next()
       } else {
         const messageId = await session.send("30秒内发送“取消”以取消评论瓶子")
         if (await session.prompt(30000) === "取消") return "已取消评论瓶子"
-        const index = /^你捞到了(\d+)号漂流瓶，来自“(.*)”！/.exec(session.quote.content)[1]
         session.elements = session.elements.map((element) => {
           if (element.type !== "at" && element.attrs.content !== " ") {
             return element
@@ -1108,7 +1251,7 @@ ${config.bottleLimit !== 0 ? `\n第${page ?? 1}/${Math.ceil(bottlesLength / conf
             return element
           }
         })
-        await session.execute(`漂流瓶.评论瓶子 ${index} ${session.content}`)
+        await session.execute(`漂流瓶.评论瓶子 ${bottleMap.get(session?.quote?.id)} ${session.content}`)
         try {
           await session.bot.deleteMessage(session.channelId, messageId[0])
         } catch {
@@ -1124,7 +1267,7 @@ ${config.bottleLimit !== 0 ? `\n第${page ?? 1}/${Math.ceil(bottlesLength / conf
           return '你没有权限！';
         }
 
-        await session.send("警告：这个功能会将所有漂流瓶的静态资源改为本地储存且无法复原，如果你确定要这么做，请在30秒内发送“是”")
+        await session.send("警告：这个功能会将所有漂流瓶的静态资源改为本地储存且无法复原成URL，如果你确定要这么做，请在30秒内发送“是”")
         let confirm = await session.prompt(30000);
         if (confirm !== '是') return "已取消操作"
 
@@ -1142,13 +1285,24 @@ ${config.bottleLimit !== 0 ? `\n第${page ?? 1}/${Math.ceil(bottlesLength / conf
             elements = await Promise.all(elements.map(async (element, index) => {
               if (["img", "audio", "video"].includes(element.type) && !element.attrs.src.startsWith("file")) {
                 flag = true
-                let response = await ctx.http("get", element.attrs.src, {responseType: "stream"})
-                let responseStream = Readable.from(response.data)
-                let ext = mimedb[response.headers.get("content-type")]?.extensions?.[0]
-                let path = resolve(config.path, `bottle-${bottle.id}-${index}.${ext}`)
-                let writer = createWriteStream(path)
-                await pipelineAsync(responseStream, writer)
-                element.attrs.src = pathToFileURL(path).href
+                if (element.attrs.src.startsWith("data:")) {
+                  let matches = element.attrs.src.match(/^data:(.+?);base64,(.*)$/)
+                  let mimeType = matches[1]
+                  let base64 = matches[2]
+                  let ext = mime.extension(mimeType)
+                  let buffer = Buffer.from(base64, "base64")
+                  let path = resolve(config.path, `bottle-${bottle.id}-${index}.${ext}`)
+                  writeFileSync(path, buffer)
+                  element.attrs.src = pathToFileURL(path).href
+                } else {
+                  let response = await ctx.http("get", element.attrs.src, {responseType: "stream"})
+                  let responseStream = Readable.from(response.data)
+                  let ext = mime.extension(response.headers.get("content-type"))
+                  let path = resolve(config.path, `bottle-${bottle.id}-${index}.${ext}`)
+                  let writer = createWriteStream(path)
+                  await pipelineAsync(responseStream, writer)
+                  element.attrs.src = pathToFileURL(path).href
+                }
                 bottleCount++
               }
               return element
@@ -1178,13 +1332,22 @@ ${config.bottleLimit !== 0 ? `\n第${page ?? 1}/${Math.ceil(bottlesLength / conf
             elements = await Promise.all(elements.map(async (element, index) => {
               if (["img", "audio", "video"].includes(element.type) && !element.attrs.src.startsWith("file")) {
                 flag = true
-                let response = await ctx.http("get", element.attrs.src, {responseType: "stream"})
-                let responseStream = Readable.from(response.data)
-                let ext = mimedb[response.headers.get("content-type")]?.extensions?.[0]
-                let path = resolve(config.path, `comment-${comment.id}-${index}.${ext}`)
-                let writer = createWriteStream(path)
-                await pipelineAsync(responseStream, writer)
-                element.attrs.src = pathToFileURL(path).href
+                if (element.attrs.src.startsWith("data:")) {
+                  let [mimeType, base64] = element.attrs.src.match(/^data:(.+?);base64,(.*)$/)
+                  let ext = mime.extension(mimeType)
+                  let buffer = Buffer.from(base64, "base64")
+                  let path = resolve(config.path, `bottle-${comment.id}-${index}.${ext}`)
+                  writeFileSync(path, buffer)
+                  element.attrs.src = pathToFileURL(path).href
+                } else {
+                  let response = await ctx.http("get", element.attrs.src, {responseType: "stream"})
+                  let responseStream = Readable.from(response.data)
+                  let ext = mime.extension(response.headers.get("content-type"))
+                  let path = resolve(config.path, `bottle-${comment.id}-${index}.${ext}`)
+                  let writer = createWriteStream(path)
+                  await pipelineAsync(responseStream, writer)
+                  element.attrs.src = pathToFileURL(path).href
+                }
                 commentCount++
               }
               return element
@@ -1203,6 +1366,106 @@ ${config.bottleLimit !== 0 ? `\n第${page ?? 1}/${Math.ceil(bottlesLength / conf
         }
 
         return `本地储存完成，共储存${bottleCount + commentCount}个静态资源
+${bottleFatal.length > 0 ? `id为 ${bottleFatal.join(", ")} 的漂流瓶储存失败` : ""}
+${commentFatal.length > 0 ? `id为 ${commentFatal.join(", ")} 的评论储存失败` : ""}
+${bottleFatal.length > 0 || commentFatal.length > 0 ? `请查看日志！` : ""}`
+        
+      })
+
+    ctx.command("漂流瓶.b64化静态资源", "将漂流瓶中的静态网络资源储存为base64编码")
+      .alias("b64化静态资源")
+      .action(async ({session}) => {
+        if (!config.manager.includes(session.event.user.id)) {
+          return '你没有权限！';
+        }
+
+        await session.send("警告：这个功能会将所有漂流瓶的静态资源储存为base64编码且无法复原成URL，如果你确定要这么做，请在30秒内发送“是”")
+        let confirm = await session.prompt(30000);
+        if (confirm !== '是') return "已取消操作"
+
+        session.send("正在编码为base64...")
+
+        let bottles = await ctx.database.get("bottle", {})
+
+        let bottleCount = 0
+        let bottleFatal = []
+        for (let bottle of bottles) {
+          try {
+            let flag = false
+            let elements = h.parse(bottle.content)
+
+            elements = await Promise.all(elements.map(async (element, index) => {
+              if (["img", "audio", "video"].includes(element.type) && !element.attrs.src.startsWith("data")) {
+                flag = true
+                if (element.attrs.src.startsWith("file")) {
+                  let path = fileURLToPath(element.attrs.src)
+                  let base64 = readFileSync(path, {encoding: "base64"})
+                  let mimeType = mime.lookup(path)
+                  element.attrs.src = `data:${mimeType};base64,${base64}`
+                } else {
+                  let response = await ctx.http("get", element.attrs.src, {responseType: "arraybuffer"})
+                  let base64 = Buffer.from(response.data).toString("base64")
+                  let mimeType = response.headers.get("content-type")
+                  element.attrs.src = `data:${mimeType};base64,${base64}`
+                }
+                bottleCount++
+              }
+              return element
+            }))
+
+            if (flag) {
+              await ctx.database.set("bottle", {id: bottle.id}, {
+                content: elements.join("")
+              })
+            }
+          } catch (e) {
+            bottleFatal.push(bottle.id)
+            ctx.logger("re-driftbottle").warn(`${bottle.id}号漂流瓶本地储存化失败：${config.debugMode ? e.stack : e.name + ": " + e.message}`)
+          }
+          
+        }
+
+        let comments = await ctx.database.get("comment", {})
+
+        let commentCount = 0
+        let commentFatal = []
+        for (let comment of comments) {
+          try {
+            let flag = false
+            let elements = h.parse(comment.content)
+
+            elements = await Promise.all(elements.map(async (element, index) => {
+              if (["img", "audio", "video"].includes(element.type) && !element.attrs.src.startsWith("data")) {
+                flag = true
+                if (element.attrs.src.startsWith("file")) {
+                  let path = fileURLToPath(element.attrs.src)
+                  let base64 = readFileSync(path, {encoding: "base64"})
+                  let mimeType = mime.lookup(path)
+                  element.attrs.src = `data:${mimeType};base64,${base64}`
+                } else {
+                  let response = await ctx.http("get", element.attrs.src, {responseType: "arraybuffer"})
+                  let base64 = Buffer.from(response.data).toString("base64")
+                  let mimeType = response.headers.get("content-type")
+                  element.attrs.src = `data:${mimeType};base64,${base64}`
+                }
+                commentCount++
+              }
+              return element
+            }))
+
+            if (flag) {
+              await ctx.database.set("comment", {id: comment.id}, {
+                content: elements.join("")
+              })
+            }
+          } catch (e) {
+            commentFatal.push(comment.id)
+            ctx.logger("re-driftbottle").warn(`${comment.bid}中的${comment.cid}号评论本地储存化失败：${config.debugMode ? e.stack : e.message}`)
+          }
+
+        }
+
+        return `base64编码完成，共储存${bottleCount + commentCount}个静态资源
 ${bottleFatal.length > 0 ? `id为 ${bottleFatal.join(", ")} 的漂流瓶储存失败` : ""}
 ${commentFatal.length > 0 ? `id为 ${commentFatal.join(", ")} 的评论储存失败` : ""}
 ${bottleFatal.length > 0 || commentFatal.length > 0 ? `请查看日志！` : ""}`

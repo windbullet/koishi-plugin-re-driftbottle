@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-re-driftbottle",
   "description": "漂流瓶重制版，跨群扔漂流瓶，你的漂流瓶会被谁看到呢？还可以评论漂流瓶哦！现在可以在新版koishi使用了，也支持adapter-red！",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
@@ -20,7 +20,7 @@
     "plugin"
   ],
   "peerDependencies": {
-    "koishi": "^4.18.0"
+    "koishi": "^4.18.8"
   },
   "koishi": {
     "service": {
@@ -33,6 +33,10 @@
     }
   },
   "dependencies": {
-    "mime-db": "^1.53.0"
+    "@satorijs/element": "^3.1.8",
+    "mime-types": "^3.0.1"
+  },
+  "devDependencies": {
+    "@types/mime-types": "^3.0.1"
   }
 }
