@@ -385,7 +385,7 @@ export async function apply(ctx: Context, config: Config) {
   ctx.command("漂流瓶.扔漂流瓶 [message:text]")
     .usage('扔漂流瓶 <内容>\n也可以引用回复一条消息（去掉@）来直接扔漂流瓶')
     .alias("扔漂流瓶")
-    .option("title", "-t <title:string>")
+    .option("title", "-t <title:string> 漂流瓶标题")
     .action(async ({ session, options }, message) => {
       if (!isNaN(+options.title)) return "名字不能是纯数字！"
       let quote = session.event.message.quote
