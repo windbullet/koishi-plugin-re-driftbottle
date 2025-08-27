@@ -502,7 +502,7 @@ export async function apply(ctx: Context, config: Config) {
             continue  
           }
         }
-      }
+      } 
       
       if (content.length > config.maxLength)
         return '内容过长！'
