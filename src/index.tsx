@@ -385,7 +385,8 @@ export async function apply(ctx: Context, config: Config) {
   ctx.command("漂流瓶.扔漂流瓶 [message:text]")
     .usage('扔漂流瓶 <内容>\n也可以引用回复一条消息（去掉@）来直接扔漂流瓶')
     .alias("扔漂流瓶")
-    .action(async ({ session }, message) => {
+    .option("title", "-t <title:string>")
+    .action(async ({ session, options }, message) => {
       let quote = session.event.message.quote
 
       if (!message && !quote) return '请输入内容或引用回复一条消息'
@@ -412,7 +413,8 @@ export async function apply(ctx: Context, config: Config) {
         username: session.username,
         content: content, 
         commentCount: 0,
-        time: Time.getDateNumber()
+        time: Time.getDateNumber(),
+        name: options.title ?? ""
       });
 
       if (config.saveMode === 'file') {
@@ -972,13 +974,13 @@ ${config.bottleLimit !== 0 ? `\n第${page ?? 1}/${Math.ceil(bottlesLength / conf
             return '你没有权限删除别人的瓶子！';
         for (let element of h.parse(bottle.content)) {
           if (["img", "audio", "video"].includes(element.type) && element.attrs.src.startsWith("file")) {
-            unlinkSync(element.attrs.src.slice(8))
+            unlinkSync(fileURLToPath(element.attrs.src))
           }
         }
         for (let comment of await ctx.database.get("comment", { bid: id })) {
           for (let element of h.parse(comment.content)) {
             if (["img", "audio", "video"].includes(element.type) && element.attrs.src.startsWith("file")) {
-              unlinkSync(element.attrs.src.slice(8))
+              unlinkSync(fileURLToPath(element.attrs.src))
             }
           }
         }
@@ -998,7 +1000,7 @@ ${config.bottleLimit !== 0 ? `\n第${page ?? 1}/${Math.ceil(bottlesLength / conf
           return '你没有权限删除别人的评论！';
         for (let element of h.parse(comment.content)) {
           if (["img", "audio", "video"].includes(element.type) && element.attrs.src.startsWith("file")) {
-            unlinkSync(element.attrs.src.slice(8))
+            unlinkSync(fileURLToPath(element.attrs.src))
           }
         }
         await ctx.database.remove('comment', { bid: bid, cid: cid });
