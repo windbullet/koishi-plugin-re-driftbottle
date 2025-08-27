@@ -387,6 +387,7 @@ export async function apply(ctx: Context, config: Config) {
     .alias("扔漂流瓶")
     .option("title", "-t <title:string>")
     .action(async ({ session, options }, message) => {
+      if (!isNaN(+options.title)) return "名字不能是纯数字！"
       let quote = session.event.message.quote
 
       if (!message && !quote) return '请输入内容或引用回复一条消息'
